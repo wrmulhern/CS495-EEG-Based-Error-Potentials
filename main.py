@@ -20,7 +20,16 @@ from PyQt5.QtWidgets import (
     QSpacerItem,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
+
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+
+from data_loader import read_epochs_eeglab_minimal
+from data_processor import average_epochs, select_time_window
+from visualizer import plot_evoked, plot_topomap, plot_joint
 
 
 class FileDropFrame(QFrame):
@@ -151,6 +160,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 720)
 
         self.selected_files: List[str] = []
+        self.current_epochs = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -179,13 +189,17 @@ class MainWindow(QMainWindow):
         graph_layout = QVBoxLayout(self.graph_frame)
         graph_layout.setContentsMargins(10, 10, 10, 10)
 
-        self.graph_placeholder = QLabel("Graph")
-        self.graph_placeholder.setAlignment(Qt.AlignCenter)
-        f = QFont()
-        f.setPointSize(24)
-        self.graph_placeholder.setFont(f)
-        self.graph_placeholder.setStyleSheet("color: #202124;")
-        graph_layout.addWidget(self.graph_placeholder, stretch=1)
+        # Create matplotlib figure and canvas
+        self.figure = Figure(figsize=(10, 6))
+        self.canvas = FigureCanvas(self.figure)
+
+        # Initial placeholder
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, 'Load data and click Visualize', 
+                ha='center', va='center', fontsize=16, color='#5f6368')
+        ax.axis('off')
+
+        graph_layout.addWidget(self.canvas, stretch=1)
 
         top_row.addWidget(self.graph_frame, stretch=3)
 
@@ -375,11 +389,28 @@ class MainWindow(QMainWindow):
             if len(names) > 6:
                 preview += f" … (+{len(names) - 6} more)"
             self.files_label.setText(f"{len(self.selected_files)} file(s): {preview}")
+
+        if self.current_epochs is None:
+            try:
+                print("Loading first file to get channel names...")
+                self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
+                
+                # Update sensor dropdown with actual channel names
+                self.sensor_combo.clear()
+                self.sensor_combo.addItems(self.current_epochs.ch_names)
+                print(f"Loaded {len(self.current_epochs.ch_names)} channels")
+            except Exception as e:
+                print(f"Could not auto-load file: {e}")
+
         else:
             self.files_label.setText("No files selected")
 
     # ---------- Visualize stub ----------
     def visualize(self):
+        if not self.selected_files:
+            QMessageBox.warning(self, "No Files", "Please select at least one .set file")
+            return
+    
         opts = {
             "epoch_start": self.epoch_start.text().strip(),
             "epoch_end": self.epoch_end.text().strip(),
@@ -390,17 +421,69 @@ class MainWindow(QMainWindow):
             "files": list(self.selected_files),
         }
 
-        # For now, just confirm the pipeline into the graph area.
-        # Replace this block later with actual plotting (matplotlib/pyqtgraph).
-        summary = [
-            f"Graph Type: {opts['graph_type']}",
-            f"Sensor: {opts['sensor']}",
-            f"Epoch: {opts['epoch_start']} — {opts['epoch_end']}",
-            f"Events/Responses: {opts['display_events_responses']}",
-            f"Live mode: {opts['live_mode']}",
-            f"Files: {len(opts['files'])}",
-        ]
-        self.graph_placeholder.setText("\n".join(summary))
+        try:
+            # STEP 1: LOAD DATA (if not already loaded)
+            if self.current_epochs is None:
+                print(f"Loading {self.selected_files[0]}...")
+                self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=True)
+                print(f"Loaded: {self.current_epochs}")
+        
+            epochs = self.current_epochs
+        
+            # STEP 2: PROCESS DATA
+        
+            # Apply time window filter if specified
+            if opts['epoch_start'] and opts['epoch_end']:
+                try:
+                    tmin = float(opts['epoch_start']) / 1000  # Convert ms to seconds
+                    tmax = float(opts['epoch_end']) / 1000
+                    print(f"Selecting time window: {tmin} to {tmax} s")
+                    epochs = select_time_window(epochs, tmin, tmax)
+                except ValueError:
+                    print("Invalid epoch times, using full range")
+        
+            # Select specific channel if needed
+            channel_picks = None
+            sensor_name = opts['sensor']
+            if sensor_name != "Sensor A" and sensor_name in epochs.ch_names:  # Update dropdown values later
+                channel_idx = epochs.ch_names.index(sensor_name)
+                channel_picks = [channel_idx]
+                print(f"Selected channel: {sensor_name}")
+        
+            # Average epochs to get evoked response
+            print("Averaging epochs...")
+            evoked = average_epochs(epochs, picks=channel_picks)
+            print(f"Result: {evoked}")
+        
+            # STEP 3: VISUALIZE
+        
+            graph_type = opts['graph_type']
+        
+            if graph_type == "Line":
+                fig = plot_evoked(evoked, window_title="ErrP Time Series", show=False)
+            elif graph_type == "Scatter":  # Using "Scatter" for topomaps
+                times = [0.1, 0.2, 0.3]  # Default times in seconds
+                fig = plot_topomap(evoked, times=times, show=False)
+            elif graph_type == "Bar":  # Using "Bar" for joint plot
+                fig = plot_joint(evoked, title="ErrP Analysis", show=False)
+            else:
+                fig = plot_evoked(evoked, show=False)
+        
+            # STEP 4: EMBED IN GUI
+
+            # Clear old plot
+            self.figure.clear()
+
+            # Simply replace the figure
+            self.figure = fig
+            self.canvas.figure = fig
+            self.canvas.draw()
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Visualization failed:\n{str(e)}")
+            print(f"Full error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def apply_light_theme(app: QApplication) -> None:
