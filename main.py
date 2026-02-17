@@ -195,7 +195,7 @@ class MainWindow(QMainWindow):
 
         # Initial placeholder
         ax = self.figure.add_subplot(111)
-        ax.text(0.5, 0.5, 'Load data and click Visualize', 
+        ax.text(0.5, 0.5, 'Load data and click Visualize',
                 ha='center', va='center', fontsize=16, color='#5f6368')
         ax.axis('off')
 
@@ -394,7 +394,7 @@ class MainWindow(QMainWindow):
             try:
                 print("Loading first file to get channel names...")
                 self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
-                
+
                 # Update sensor dropdown with actual channel names
                 self.sensor_combo.clear()
                 self.sensor_combo.addItems(self.current_epochs.ch_names)
@@ -410,7 +410,7 @@ class MainWindow(QMainWindow):
         if not self.selected_files:
             QMessageBox.warning(self, "No Files", "Please select at least one .set file")
             return
-    
+
         opts = {
             "epoch_start": self.epoch_start.text().strip(),
             "epoch_end": self.epoch_end.text().strip(),
@@ -427,11 +427,11 @@ class MainWindow(QMainWindow):
                 print(f"Loading {self.selected_files[0]}...")
                 self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=True)
                 print(f"Loaded: {self.current_epochs}")
-        
+
             epochs = self.current_epochs
-        
+
             # STEP 2: PROCESS DATA
-        
+
             # Apply time window filter if specified
             if opts['epoch_start'] and opts['epoch_end']:
                 try:
@@ -441,7 +441,7 @@ class MainWindow(QMainWindow):
                     epochs = select_time_window(epochs, tmin, tmax)
                 except ValueError:
                     print("Invalid epoch times, using full range")
-        
+
             # Select specific channel if needed
             channel_picks = None
             sensor_name = opts['sensor']
@@ -449,16 +449,16 @@ class MainWindow(QMainWindow):
                 channel_idx = epochs.ch_names.index(sensor_name)
                 channel_picks = [channel_idx]
                 print(f"Selected channel: {sensor_name}")
-        
+
             # Average epochs to get evoked response
             print("Averaging epochs...")
             evoked = average_epochs(epochs, picks=channel_picks)
             print(f"Result: {evoked}")
-        
+
             # STEP 3: VISUALIZE
-        
+
             graph_type = opts['graph_type']
-        
+
             if graph_type == "Line":
                 fig = plot_evoked(evoked, window_title="ErrP Time Series", show=False)
             elif graph_type == "Scatter":  # Using "Scatter" for topomaps
@@ -468,17 +468,21 @@ class MainWindow(QMainWindow):
                 fig = plot_joint(evoked, title="ErrP Analysis", show=False)
             else:
                 fig = plot_evoked(evoked, show=False)
-        
+
             # STEP 4: EMBED IN GUI
 
-            # Clear old plot
-            self.figure.clear()
+            # Remove old canvas widget from layout
+            graph_layout = self.graph_frame.layout()
+            graph_layout.removeWidget(self.canvas)
+            self.canvas.setParent(None)
+            self.canvas.deleteLater()
 
-            # Simply replace the figure
+            # Install new canvas bound correctly to the new figure
             self.figure = fig
-            self.canvas.figure = fig
-            self.canvas.draw()
-        
+            self.canvas = FigureCanvas(self.figure)
+            graph_layout.addWidget(self.canvas, stretch=1)
+            self.canvas.draw_idle()
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Visualization failed:\n{str(e)}")
             print(f"Full error: {e}")
