@@ -227,12 +227,35 @@ class FileWindow(QMainWindow):
         browse_col = QVBoxLayout()
         browse_label = QLabel("Browse")
         browse_label.setStyleSheet("font-size: 13px; color: #202124;")
+
+        # browse button
         self.browse_btn = QPushButton("…")
         self.browse_btn.setFixedWidth(70)
         self.browse_btn.clicked.connect(self.browse_files)
 
+        # clear button
+        clear_label = QLabel("Clear")
+        clear_label.setStyleSheet("font-size: 13px; color: #202124;")
+        clear_label.setAlignment(Qt.AlignHCenter)
+
+        self.clear_btn = QPushButton("✕")
+        self.clear_btn.setFixedWidth(70)
+        self.clear_btn.setStyleSheet("""
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #d93025;
+                border-radius: 4px;
+                color: #d93025;
+                font-size: 16px;
+            }
+            QPushButton:hover { background: #fce8e6; }
+        """)
+        self.clear_btn.clicked.connect(self.clear_files)
+
         browse_col.addWidget(browse_label, alignment=Qt.AlignHCenter)
         browse_col.addWidget(self.browse_btn, alignment=Qt.AlignHCenter)
+        browse_col.addWidget(clear_label, alignment=Qt.AlignHCenter)
+        browse_col.addWidget(self.clear_btn, alignment=Qt.AlignHCenter)
         browse_col.addItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
         drop_browse_layout.addLayout(browse_col, 0, 3, 1, 1)
@@ -287,6 +310,9 @@ class FileWindow(QMainWindow):
             self.add_files(paths)
 
     def add_files(self, paths: List[str]):
+        self.selected_files.clear()
+        self.current_epochs = None
+        
         # de-dup + keep stable order
         for p in paths:
             ap = os.path.abspath(p)
@@ -301,17 +327,17 @@ class FileWindow(QMainWindow):
                 preview += f" … (+{len(names) - 6} more)"
             self.files_label.setText(f"{len(self.selected_files)} file(s): {preview}")
 
-        if self.current_epochs is None:
-            try:
-                print("Loading first file to get channel names...")
-                self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
+            if self.current_epochs is None:
+                try:
+                    print("Loading first file to get channel names...")
+                    self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
 
-                # Update sensor dropdown with actual channel names
-                self.sensor_combo.clear()
-                self.sensor_combo.addItems(self.current_epochs.ch_names)
-                print(f"Loaded {len(self.current_epochs.ch_names)} channels")
-            except Exception as e:
-                print(f"Could not auto-load file: {e}")
+                    # Update sensor dropdown with actual channel names
+                    self.sensor_combo.clear()
+                    self.sensor_combo.addItems(self.current_epochs.ch_names)
+                    print(f"Loaded {len(self.current_epochs.ch_names)} channels")
+                except Exception as e:
+                    print(f"Could not auto-load file: {e}")
 
         else:
             self.files_label.setText("No files selected")
@@ -423,3 +449,21 @@ class FileWindow(QMainWindow):
         # Re run visualization with current settings
         print(f"Events/Responses display: {self.events_checkbox.isChecked()}")
         self.visualize()
+
+    def clear_files(self):
+        """Clear all selected files"""
+        self.selected_files.clear()
+        self.current_epochs = None
+        self.files_label.setText("No files selected")
+        self.sensor_combo.clear()
+        self.sensor_combo.addItems(["Sensor A", "Sensor B", "Sensor C"])
+    
+        # Clear the graph
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, 'Load data and click Visualize',
+                ha='center', va='center', fontsize=16, color='#5f6368')
+        ax.axis('off')
+        self.canvas.draw()
+    
+        print("Files cleared")
