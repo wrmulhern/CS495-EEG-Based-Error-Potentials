@@ -105,7 +105,7 @@ def select_channels(epochs, channel_indices):
     Returns:
         New EpochsData object with selected channels
     """
-    from data_loader import EpochsData
+    from .data_loader import EpochsData
 
     selected_data = epochs.data[:, channel_indices, :]
     selected_names = [epochs.ch_names[i] for i in channel_indices]
@@ -140,7 +140,7 @@ def select_time_window(epochs, tmin, tmax):
     Returns:
         New EpochsData object with selected time window
     """
-    from data_loader import EpochsData
+    from .data_loader import EpochsData
 
     # Find time indices
     start_idx = np.argmin(np.abs(epochs.times - tmin))

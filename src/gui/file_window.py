@@ -1,8 +1,11 @@
 import os
 from typing import List
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QPalette, QColor
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,137 +26,13 @@ from PyQt5.QtWidgets import (
     QMessageBox,
 )
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
+from src.data_processing.data_loader import read_epochs_eeglab_minimal
+from src.data_processing.data_processor import average_epochs, select_time_window
+from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint
+from .utils.drag_and_drop import FileDropFrame
+from .utils.checkbox import ToggleSwitch
 
-from data_loader import read_epochs_eeglab_minimal
-from data_processor import average_epochs, select_time_window
-from visualizer import plot_evoked, plot_topomap, plot_joint
-
-
-class FileDropFrame(QFrame):
-    filesDropped = pyqtSignal(list)  # List[str]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet(
-            """
-            FileDropFrame {
-                border: 2px dashed #9aa0a6;
-                border-radius: 6px;
-                background: #ffffff;
-            }
-            QLabel {
-                background: transparent;
-            }
-            """
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(6)
-
-        self.title = QLabel("Drag and drop one or more files here")
-        self.title.setAlignment(Qt.AlignCenter)
-        self.title.setStyleSheet("color: #202124; font-size: 14px; border: none;")
-
-        layout.addStretch(1)
-        layout.addWidget(self.title)
-        layout.addStretch(1)
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            self.setStyleSheet(
-                """
-                QFrame {
-                    border: 2px dashed #1a73e8;
-                    border-radius: 6px;
-                    background: #e8f0fe;
-                }
-                """
-            )
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.setStyleSheet(
-            """
-            QFrame {
-                border: 2px dashed #9aa0a6;
-                border-radius: 6px;
-                background: #ffffff;
-            }
-            """
-        )
-        super().dragLeaveEvent(event)
-
-    def dropEvent(self, event):
-        self.setStyleSheet(
-            """
-            QFrame {
-                border: 2px dashed #9aa0a6;
-                border-radius: 6px;
-                background: #ffffff;
-            }
-            """
-        )
-
-        urls = event.mimeData().urls()
-        paths = []
-        for u in urls:
-            p = u.toLocalFile()
-            if p:
-                paths.append(os.path.abspath(p))
-
-        if paths:
-            self.filesDropped.emit(paths)
-
-        event.acceptProposedAction()
-
-
-class ToggleSwitch(QCheckBox):
-    """
-    A simple toggle-looking checkbox (still a QCheckBox under the hood).
-    """
-
-    def __init__(self, text=""):
-        super().__init__(text)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setChecked(False)
-        self.setStyleSheet(
-            """
-            QCheckBox {
-                spacing: 10px;
-                color: #202124;
-                font-size: 13px;
-            }
-            QCheckBox::indicator {
-                width: 44px;
-                height: 24px;
-            }
-            QCheckBox::indicator:unchecked {
-                border-radius: 12px;
-                background: #dadce0;
-            }
-            QCheckBox::indicator:unchecked:pressed {
-                background: #c7c9cc;
-            }
-            QCheckBox::indicator:checked {
-                border-radius: 12px;
-                background: #1a73e8;
-            }
-            QCheckBox::indicator:checked:pressed {
-                background: #1666c1;
-            }
-            """
-        )
-
-
-class MainWindow(QMainWindow):
+class FileWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ErrP Visualizer")
@@ -165,19 +44,38 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
 
-        outer = QVBoxLayout(central)
-        outer.setContentsMargins(18, 18, 18, 18)
-        outer.setSpacing(14)
+        self.outer = QVBoxLayout(central)
+        self.outer.setContentsMargins(18, 18, 18, 18)
+        self.outer.setSpacing(14)
 
+        # graph and graph options
+        self.topInit()
+        # live mode, drag and drop, browse
+        self.middleInit()
+        # visualize
+        self.bottomInit()
+
+
+    def topInit(self):
         # --- Top: Graph area (left) + Graph Options (right)
         top_row = QHBoxLayout()
         top_row.setSpacing(18)
-        outer.addLayout(top_row, stretch=1)
+        self.outer.addLayout(top_row, stretch=1)
 
+        self.graph_frame = self.graphInit()
+
+        top_row.addWidget(self.graph_frame, stretch=3)
+
+        # Graph Options panel
+        options_box = self.graphOptionsInit()
+
+        top_row.addWidget(options_box, stretch=1)
+
+    def graphInit(self):
         # Graph area (placeholder)
-        self.graph_frame = QFrame()
-        self.graph_frame.setFrameShape(QFrame.StyledPanel)
-        self.graph_frame.setStyleSheet(
+        graph_frame = QFrame()
+        graph_frame.setFrameShape(QFrame.StyledPanel)
+        graph_frame.setStyleSheet(
             """
             QFrame {
                 background: #ffffff;
@@ -186,7 +84,7 @@ class MainWindow(QMainWindow):
             }
             """
         )
-        graph_layout = QVBoxLayout(self.graph_frame)
+        graph_layout = QVBoxLayout(graph_frame)
         graph_layout.setContentsMargins(10, 10, 10, 10)
 
         # Create matplotlib figure and canvas
@@ -200,10 +98,9 @@ class MainWindow(QMainWindow):
         ax.axis('off')
 
         graph_layout.addWidget(self.canvas, stretch=1)
+        return graph_frame
 
-        top_row.addWidget(self.graph_frame, stretch=3)
-
-        # Graph Options panel
+    def graphOptionsInit(self):
         options_box = QGroupBox("Graph Options")
         options_box.setStyleSheet(
             """
@@ -276,15 +173,26 @@ class MainWindow(QMainWindow):
         options_layout.addWidget(self.events_checkbox)
 
         options_layout.addStretch(1)
+        return options_box
 
-        top_row.addWidget(options_box, stretch=1)
 
-        # --- Middle: Live mode + Drop zone + Browse
+    def middleInit(self):
         mid_row = QHBoxLayout()
         mid_row.setSpacing(18)
-        outer.addLayout(mid_row)
+        self.outer.addLayout(mid_row)
 
         # Live mode toggle area
+        live_col = self.liveModeToggleInit()
+
+        mid_row.addLayout(live_col, stretch=1)
+
+        # Drag/drop + Browse group (mimics the wide box)
+        drop_browse_frame = self.dropBrowseFileInit()
+
+        mid_row.addWidget(drop_browse_frame, stretch=2)
+        mid_row.addStretch(1)
+
+    def liveModeToggleInit(self):
         live_col = QVBoxLayout()
         live_label = QLabel("Live mode")
         live_label.setStyleSheet("font-size: 13px; color: #202124;")
@@ -292,10 +200,9 @@ class MainWindow(QMainWindow):
         live_col.addWidget(live_label)
         live_col.addWidget(self.live_toggle)
         live_col.addStretch(1)
+        return live_col
 
-        mid_row.addLayout(live_col, stretch=1)
-
-        # Drag/drop + Browse group (mimics the wide box)
+    def dropBrowseFileInit(self):
         drop_browse_frame = QFrame()
         drop_browse_frame.setFrameShape(QFrame.StyledPanel)
         drop_browse_frame.setStyleSheet(
@@ -333,20 +240,25 @@ class MainWindow(QMainWindow):
         self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
         self.files_label.setWordWrap(True)
         drop_browse_layout.addWidget(self.files_label, 1, 0, 1, 4)
+        return drop_browse_frame
 
-        mid_row.addWidget(drop_browse_frame, stretch=2)
-        mid_row.addStretch(1)
-
-        # --- Bottom: Visualize button
+    def bottomInit(self):
         bottom_row = QHBoxLayout()
-        outer.addLayout(bottom_row)
+        self.outer.addLayout(bottom_row)
 
         bottom_row.addStretch(1)
 
-        self.visualize_btn = QPushButton("Visualize")
-        self.visualize_btn.setCursor(Qt.PointingHandCursor)
-        self.visualize_btn.setFixedSize(260, 48)
-        self.visualize_btn.setStyleSheet(
+        self.visualize_btn = self.visualizeButtonInit()
+
+        bottom_row.addWidget(self.visualize_btn)
+
+        bottom_row.addStretch(1)
+
+    def visualizeButtonInit(self):
+        visualize_btn = QPushButton("Visualize")
+        visualize_btn.setCursor(Qt.PointingHandCursor)
+        visualize_btn.setFixedSize(260, 48)
+        visualize_btn.setStyleSheet(
             """
             QPushButton {
                 background: #ffffff;
@@ -359,10 +271,8 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background: #e8f0fe; }
             """
         )
-        self.visualize_btn.clicked.connect(self.visualize)
-        bottom_row.addWidget(self.visualize_btn)
-
-        bottom_row.addStretch(1)
+        visualize_btn.clicked.connect(self.visualize)
+        return visualize_btn
 
     # ---------- File selection ----------
     def browse_files(self):
@@ -488,35 +398,3 @@ class MainWindow(QMainWindow):
             print(f"Full error: {e}")
             import traceback
             traceback.print_exc()
-
-
-def apply_light_theme(app: QApplication) -> None:
-    app.setStyle("Fusion")
-
-    pal = QPalette()
-
-    pal.setColor(QPalette.Window, QColor(245, 245, 245))
-    pal.setColor(QPalette.WindowText, QColor(32, 33, 36))
-
-    pal.setColor(QPalette.Base, QColor(255, 255, 255))
-    pal.setColor(QPalette.AlternateBase, QColor(240, 240, 240))
-
-    pal.setColor(QPalette.Text, QColor(32, 33, 36))
-    pal.setColor(QPalette.Button, QColor(255, 255, 255))
-    pal.setColor(QPalette.ButtonText, QColor(32, 33, 36))
-
-    pal.setColor(QPalette.Highlight, QColor(26, 115, 232))
-    pal.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-
-    app.setPalette(pal)
-
-def main():
-    app = QApplication([])
-    apply_light_theme(app)
-    w = MainWindow()
-    w.show()
-    app.exec_()
-
-
-if __name__ == "__main__":
-    main()

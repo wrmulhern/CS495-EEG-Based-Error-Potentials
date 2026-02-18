@@ -14,5 +14,5 @@ uv sync
 ```
 To then run the code using the environment:
 ```bash
-uv run main.py
+uv run -m src.main
 ```
