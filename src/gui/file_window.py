@@ -170,6 +170,7 @@ class FileWindow(QMainWindow):
         # Checkbox
         self.events_checkbox = QCheckBox("Display Events and Responses")
         self.events_checkbox.setStyleSheet("font-size: 12px; color: #202124;")
+        self.events_checkbox.stateChanged.connect(self.on_events_checkbox_changed)
         options_layout.addWidget(self.events_checkbox)
 
         options_layout.addStretch(1)
@@ -370,7 +371,10 @@ class FileWindow(QMainWindow):
             graph_type = opts['graph_type']
 
             if graph_type == "Line":
-                fig = plot_evoked(evoked, window_title="ErrP Time Series", show=False)
+                fig = plot_evoked(evoked, 
+                                 window_title="ErrP Time Series", 
+                                 display_events_responses=opts['display_events_responses'],
+                                 show=False)
             elif graph_type == "Scatter":  # Using "Scatter" for topomaps
                 times = [0.1, 0.2, 0.3]  # Default times in seconds
                 fig = plot_topomap(evoked, times=times, show=False)
@@ -398,3 +402,24 @@ class FileWindow(QMainWindow):
             print(f"Full error: {e}")
             import traceback
             traceback.print_exc()
+
+    def on_events_checkbox_changed(self, state):
+        """
+        Called when the 'Display Events and Responses' checkbox is toggled.
+        Re-renders the current plot if data is loaded and graph type is Line.
+        """
+        # Only update if we have data already loaded and visualized
+        if self.current_epochs is None:
+            return
+        
+        # Check if we have a valid figure already displayed
+        if not hasattr(self, 'figure') or self.figure is None:
+            return
+        
+        # Only update for Line graphs (where events/responses are shown)
+        if self.graph_type_combo.currentText() != "Line":
+            return
+        
+        # Re run visualization with current settings
+        print(f"Events/Responses display: {self.events_checkbox.isChecked()}")
+        self.visualize()

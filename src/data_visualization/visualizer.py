@@ -49,7 +49,7 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True):
 
 
 def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
-                window_title=None, scalings=None, titles=None, show=True):
+                window_title=None, scalings=None, titles=None, display_events_responses=False, show=True):
     """
     Plot evoked response (ERP/ErrP).
 
@@ -61,6 +61,8 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
         window_title: figure window title
         scalings: dict of scaling factors
         titles: channel titles
+        show: whether to display the plot
+        display_events_responses: if True, show event marker and response window
         show: whether to display the plot
 
     Returns:
@@ -90,8 +92,144 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
         ax.plot(evoked.times * 1000, gfp_data, 'k--', linewidth=2,
                label='GFP', alpha=0.6)
 
-    ax.axvline(0, color='k', linestyle='--', linewidth=1)
+    # ax.axvline(0, color='k', linestyle='--', linewidth=1)
+
+    # Event line drawn conditionally below based on display_events_responses
+    if not display_events_responses:
+        ax.axvline(0, color='k', linestyle='--', linewidth=1)
     ax.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
+
+    # Display event marker and response windows if requested
+    if display_events_responses:
+        # Get the actual time range being displayed (in ms)
+        time_min_ms = evoked.times[0] * 1000
+        time_max_ms = evoked.times[-1] * 1000
+        
+        # Event onset marker at 0 ms
+        if time_min_ms <= 0 <= time_max_ms:
+            ax.axvline(0, color='red', linestyle='--', linewidth=2, 
+                       label='Event', zorder=5)
+        
+        # ERN/Ne component window (50-150ms) - only draw if it overlaps with data range
+        ern_start = 50
+        ern_end = 150
+        
+        # Check if ERN window overlaps with displayed time range
+        if ern_start < time_max_ms and ern_end > time_min_ms:
+            # Clip to actual data range
+            ern_display_start = max(ern_start, time_min_ms)
+            ern_display_end = min(ern_end, time_max_ms)
+            
+            # Only draw lines if they're in range
+            if time_min_ms <= ern_start <= time_max_ms:
+                ern_line1 = ax.axvline(ern_start, color='blue', linestyle='--', 
+                                       linewidth=1.5, alpha=0.7)
+            if time_min_ms <= ern_end <= time_max_ms:
+                ern_line2 = ax.axvline(ern_end, color='blue', linestyle='--', 
+                                       linewidth=1.5, alpha=0.7)
+            
+            # Draw shaded region (clipped to visible range)
+            ern_span = ax.axvspan(ern_display_start, ern_display_end, 
+                                  alpha=0.15, color='lightblue', zorder=1)
+            
+            # Create hover annotation
+            ern_annotation = ax.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
+                                         xy=((ern_display_start + ern_display_end) / 2, 0),
+                                         xytext=((ern_display_start + ern_display_end) / 2, 
+                                                ax.get_ylim()[0] * 0.7),
+                                         ha='center', va='bottom',
+                                         fontsize=10, color='darkblue',
+                                         bbox=dict(boxstyle='round,pad=0.5', 
+                                                  facecolor='white', 
+                                                  edgecolor='blue', 
+                                                  alpha=0.95,
+                                                  linewidth=2),
+                                         visible=False,
+                                         zorder=10)
+        else:
+            ern_annotation = None  # ERN window not in range
+        
+        # Pe component window (200-400ms) - only draw if it overlaps with data range
+        pe_start = 200
+        pe_end = 400
+        
+        # Check if Pe window overlaps with displayed time range
+        if pe_start < time_max_ms and pe_end > time_min_ms:
+            # Clip to actual data range
+            pe_display_start = max(pe_start, time_min_ms)
+            pe_display_end = min(pe_end, time_max_ms)
+            
+            # Only draw lines if they're in range
+            if time_min_ms <= pe_start <= time_max_ms:
+                pe_line1 = ax.axvline(pe_start, color='green', linestyle='--', 
+                                      linewidth=1.5, alpha=0.7)
+            if time_min_ms <= pe_end <= time_max_ms:
+                pe_line2 = ax.axvline(pe_end, color='green', linestyle='--', 
+                                      linewidth=1.5, alpha=0.7)
+            
+            # Draw shaded region (clipped to visible range)
+            pe_span = ax.axvspan(pe_display_start, pe_display_end, 
+                                 alpha=0.15, color='lightgreen', zorder=1)
+            
+            # Create hover annotation
+            pe_annotation = ax.annotate('Pe\n(200-400ms)\nPositive peak',
+                                        xy=((pe_display_start + pe_display_end) / 2, 0),
+                                        xytext=((pe_display_start + pe_display_end) / 2, 
+                                               ax.get_ylim()[1] * 0.7),
+                                        ha='center', va='top',
+                                        fontsize=10, color='darkgreen',
+                                        bbox=dict(boxstyle='round,pad=0.5', 
+                                                 facecolor='white', 
+                                                 edgecolor='green', 
+                                                 alpha=0.95,
+                                                 linewidth=2),
+                                        visible=False,
+                                        zorder=10)
+        else:
+            pe_annotation = None  # Pe window not in range
+        
+        # Set up hover functionality (only if at least one annotation exists)
+        if ern_annotation is not None or pe_annotation is not None:
+            def on_hover(event):
+                # Hide labels if mouse leaves the plot area
+                if event.inaxes != ax:
+                    if ern_annotation and ern_annotation.get_visible():
+                        ern_annotation.set_visible(False)
+                        fig.canvas.draw_idle()
+                    if pe_annotation and pe_annotation.get_visible():
+                        pe_annotation.set_visible(False)
+                        fig.canvas.draw_idle()
+                    return
+                
+                mouse_x = event.xdata
+                
+                # Check if mouse is over ERN window
+                if ern_annotation and ern_start <= mouse_x <= ern_end:
+                    ern_annotation.set_visible(True)
+                    if pe_annotation:
+                        pe_annotation.set_visible(False)
+                    fig.canvas.draw_idle()
+                # Check if mouse is over Pe window
+                elif pe_annotation and pe_start <= mouse_x <= pe_end:
+                    if ern_annotation:
+                        ern_annotation.set_visible(False)
+                    pe_annotation.set_visible(True)
+                    fig.canvas.draw_idle()
+                # Mouse is outside both windows
+                else:
+                    changed = False
+                    if ern_annotation and ern_annotation.get_visible():
+                        ern_annotation.set_visible(False)
+                        changed = True
+                    if pe_annotation and pe_annotation.get_visible():
+                        pe_annotation.set_visible(False)
+                        changed = True
+                    if changed:
+                        fig.canvas.draw_idle()
+            
+            # Connect the hover event
+            fig.canvas.mpl_connect('motion_notify_event', on_hover)
+
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('Amplitude (uV)')
     ax.set_title(window_title or 'Evoked Response (Average)')
