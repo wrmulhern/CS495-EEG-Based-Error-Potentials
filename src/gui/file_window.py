@@ -162,7 +162,7 @@ class FileWindow(QMainWindow):
         graph_type_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         self.graph_type_combo = QComboBox()
-        self.graph_type_combo.addItems(["Line", "Scatter", "Bar"])  # placeholder
+        self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Maps", "ErrP Analysis with Topomaps"])  # placeholder
 
         options_layout.addWidget(graph_type_label)
         options_layout.addWidget(self.graph_type_combo)
@@ -396,15 +396,15 @@ class FileWindow(QMainWindow):
 
             graph_type = opts['graph_type']
 
-            if graph_type == "Line":
+            if graph_type == "ErrP Time Series":
                 fig = plot_evoked(evoked, 
                                  window_title="ErrP Time Series", 
                                  display_events_responses=opts['display_events_responses'],
                                  show=False)
-            elif graph_type == "Scatter":  # Using "Scatter" for topomaps
+            elif graph_type == "Topographic Maps":  # Using "Topographic Maps" for topomaps
                 times = [0.1, 0.2, 0.3]  # Default times in seconds
                 fig = plot_topomap(evoked, times=times, show=False)
-            elif graph_type == "Bar":  # Using "Bar" for joint plot
+            elif graph_type == "ErrP Analysis with Topomaps":  # Using "ErrP Analysis with Topomaps" for joint plot
                 fig = plot_joint(evoked, title="ErrP Analysis", show=False)
             else:
                 fig = plot_evoked(evoked, show=False)
@@ -432,7 +432,7 @@ class FileWindow(QMainWindow):
     def on_events_checkbox_changed(self, state):
         """
         Called when the 'Display Events and Responses' checkbox is toggled.
-        Re-renders the current plot if data is loaded and graph type is Line.
+        Re-renders the current plot if data is loaded and graph type is ErrP Time Series.
         """
         # Only update if we have data already loaded and visualized
         if self.current_epochs is None:
@@ -442,8 +442,8 @@ class FileWindow(QMainWindow):
         if not hasattr(self, 'figure') or self.figure is None:
             return
         
-        # Only update for Line graphs (where events/responses are shown)
-        if self.graph_type_combo.currentText() != "Line":
+        # Only update for ErrP Time Series graphs (where events/responses are shown)
+        if self.graph_type_combo.currentText() != "ErrP Time Series":
             return
         
         # Re run visualization with current settings
