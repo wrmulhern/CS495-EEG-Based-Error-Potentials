@@ -151,7 +151,7 @@ class FileWindow(QMainWindow):
         sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         self.sensor_combo = QComboBox()
-        self.sensor_combo.addItems(["Sensor A", "Sensor B", "Sensor C"])  # placeholder
+        self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])  # placeholder
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         options_layout.addWidget(sensor_label)
@@ -163,6 +163,7 @@ class FileWindow(QMainWindow):
 
         self.graph_type_combo = QComboBox()
         self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Map", "Joint Maps"])  # placeholder
+        self.graph_type_combo.currentTextChanged.connect(self.on_graph_type_changed)
 
         options_layout.addWidget(graph_type_label)
         options_layout.addWidget(self.graph_type_combo)
@@ -332,9 +333,11 @@ class FileWindow(QMainWindow):
                     print("Loading first file to get channel names...")
                     self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
 
-                    # Update sensor dropdown with actual channel names
+                    # Update sensor dropdown: "All Channels" first, then actual channel names
                     self.sensor_combo.clear()
+                    self.sensor_combo.addItem("All Channels")
                     self.sensor_combo.addItems(self.current_epochs.ch_names)
+                    self.sensor_combo.setCurrentText("All Channels")
                     print(f"Loaded {len(self.current_epochs.ch_names)} channels")
                 except Exception as e:
                     print(f"Could not auto-load file: {e}")
@@ -379,10 +382,12 @@ class FileWindow(QMainWindow):
                 except ValueError:
                     print("Invalid epoch times, using full range")
 
-            # Select specific channel if needed
+            # Select specific channel if needed (topomap/joint require all channels)
             channel_picks = None
             sensor_name = opts['sensor']
-            if sensor_name != "Sensor A" and sensor_name in epochs.ch_names:  # Update dropdown values later
+            graph_type = opts['graph_type']
+            needs_all_channels = graph_type in ("Topographic Map", "Joint Maps")
+            if not needs_all_channels and sensor_name != "All Channels" and sensor_name in epochs.ch_names:
                 channel_idx = epochs.ch_names.index(sensor_name)
                 channel_picks = [channel_idx]
                 print(f"Selected channel: {sensor_name}")
@@ -429,6 +434,13 @@ class FileWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
+    def on_graph_type_changed(self, graph_type: str):
+        """When Topographic Map or Joint Maps is selected, auto-select All Channels."""
+        if graph_type in ("Topographic Map", "Joint Maps"):
+            idx = self.sensor_combo.findText("All Channels")
+            if idx >= 0:
+                self.sensor_combo.setCurrentIndex(idx)
+
     def on_events_checkbox_changed(self, state):
         """
         Called when the 'Display Events and Responses' checkbox is toggled.
@@ -456,7 +468,7 @@ class FileWindow(QMainWindow):
         self.current_epochs = None
         self.files_label.setText("No files selected")
         self.sensor_combo.clear()
-        self.sensor_combo.addItems(["Sensor A", "Sensor B", "Sensor C"])
+        self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])
     
         # Clear the graph
         self.figure.clear()

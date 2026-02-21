@@ -304,7 +304,7 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
                           fraction=0.05, pad=0.04)
         cbar.set_label('Amplitude (uV)')
 
-    plt.suptitle('Topographic Maps', fontsize=14, y=1.02)
+    plt.suptitle('Topographic Maps', fontsize=14, y=0.95)
 
     if show:
         plt.tight_layout()
@@ -345,9 +345,9 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     n_topos = len(times)
     fig = plt.figure(figsize=(14, 8))
 
-    # Create grid: top row for time series, bottom for topomaps
+    # Create grid: top row for time series, bottom for topomaps (extra hspace avoids overlap of x-axis label with topomap titles)
     gs = fig.add_gridspec(2, n_topos, height_ratios=[2, 1],
-                         hspace=0.3, wspace=0.3)
+                         hspace=0.55, wspace=0.3)
 
     # Time series plot (spans all columns)
     ax_ts = fig.add_subplot(gs[0, :])
