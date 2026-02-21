@@ -162,7 +162,7 @@ class FileWindow(QMainWindow):
         graph_type_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         self.graph_type_combo = QComboBox()
-        self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Maps", "ErrP Analysis with Topomaps"])  # placeholder
+        self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Map", "Joint Maps"])  # placeholder
 
         options_layout.addWidget(graph_type_label)
         options_layout.addWidget(self.graph_type_combo)
@@ -401,10 +401,10 @@ class FileWindow(QMainWindow):
                                  window_title="ErrP Time Series", 
                                  display_events_responses=opts['display_events_responses'],
                                  show=False)
-            elif graph_type == "Topographic Maps":  # Using "Topographic Maps" for topomaps
+            elif graph_type == "Topographic Map":  # Using "Topographic Map" for topomaps
                 times = [0.1, 0.2, 0.3]  # Default times in seconds
                 fig = plot_topomap(evoked, times=times, show=False)
-            elif graph_type == "ErrP Analysis with Topomaps":  # Using "ErrP Analysis with Topomaps" for joint plot
+            elif graph_type == "Joint Maps":  # Using "Joint Maps" for joint plot
                 fig = plot_joint(evoked, title="ErrP Analysis", show=False)
             else:
                 fig = plot_evoked(evoked, show=False)
