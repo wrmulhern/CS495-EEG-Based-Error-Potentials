@@ -9,7 +9,48 @@ from scipy import signal
 from scipy.interpolate import griddata
 
 
-def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True):
+def _apply_mpl_theme(fig, axes, theme: str = "light"):
+    """
+    Apply a light or dark theme to a Matplotlib figure used by the GUI.
+
+    This keeps plot styling consistent with the Qt palette without changing
+    the underlying data colors.
+    """
+    if isinstance(axes, (list, tuple, np.ndarray)):
+        axes_list = list(axes)
+    else:
+        axes_list = [axes]
+
+    if theme == "dark":
+        bg_color = "#121212"
+        axis_bg = "#121212"
+        text_color = "#e8eaed"
+        grid_color = "#3c4043"
+    else:
+        bg_color = "#ffffff"
+        axis_bg = "#ffffff"
+        text_color = "#202124"
+        grid_color = "#dadce0"
+
+    fig.patch.set_facecolor(bg_color)
+
+    # Color figure-level suptitle (e.g., "Topographic Maps") when present
+    # Matplotlib stores this as a private attribute on the Figure.
+    if hasattr(fig, "_suptitle") and fig._suptitle is not None:
+        fig._suptitle.set_color(text_color)
+
+    for ax in axes_list:
+        ax.set_facecolor(axis_bg)
+        ax.tick_params(colors=text_color)
+        ax.xaxis.label.set_color(text_color)
+        ax.yaxis.label.set_color(text_color)
+        ax.title.set_color(text_color)
+        ax.grid(color=grid_color, alpha=0.3)
+        for spine in ax.spines.values():
+            spine.set_color(grid_color)
+
+
+def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, theme: str = "light"):
     """
     Plot all channels for all epochs (butterfly plot).
 
@@ -41,6 +82,8 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True):
     ax.set_title(title or f'Epochs ({epochs.data.shape[0]} epochs)')
     ax.grid(True, alpha=0.3)
 
+    _apply_mpl_theme(fig, ax, theme=theme)
+
     if show:
         plt.tight_layout()
         plt.show()
@@ -49,7 +92,8 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True):
 
 
 def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
-                window_title=None, scalings=None, titles=None, display_events_responses=False, show=True):
+                window_title=None, scalings=None, titles=None,
+                display_events_responses=False, show=True, theme: str = "light"):
     """
     Plot evoked response (ERP/ErrP).
 
@@ -235,6 +279,8 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     ax.set_title(window_title or 'Evoked Response (Average)')
     ax.grid(True, alpha=0.3)
 
+    _apply_mpl_theme(fig, ax, theme=theme)
+
     if len(picks) <= 20:
         ax.legend(loc='best', fontsize=8)
 
@@ -246,7 +292,7 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
 
 
 def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
-                 cmap='RdBu_r', sensors=True, contours=6, show=True):
+                 cmap='RdBu_r', sensors=True, contours=6, show=True, theme: str = "light"):
     """
     Plot topographic maps at specific time points.
 
@@ -266,7 +312,7 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
     if evoked.ch_locs is None:
         print("Warning: No channel locations available. Cannot create topomap.")
         print("Showing simple time-series plot instead.")
-        return plot_evoked(evoked, show=show)
+        return plot_evoked(evoked, show=show, theme=theme)
 
     if not isinstance(times, (list, np.ndarray)):
         times = [times]
@@ -306,6 +352,8 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
 
     plt.suptitle('Topographic Maps', fontsize=14, y=0.95)
 
+    _apply_mpl_theme(fig, axes, theme=theme)
+
     if show:
         plt.tight_layout()
         plt.show()
@@ -314,7 +362,8 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
 
 
 def plot_joint(evoked, times=None, title='', ts_args=None,
-               topomap_args=None, display_events_responses=False, show=True):
+               topomap_args=None, display_events_responses=False,
+               show=True, theme: str = "light"):
     """
     Plot evoked response with topomaps at specific time points.
 
@@ -358,10 +407,15 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
         ax_ts.plot(evoked.times * 1000, evoked.data[ch_idx, :] * 1e6,
                   alpha=0.5, linewidth=0.8)
 
-    # Mark time points
+    # Mark time points for the topographic maps below (always show)
     for time in times:
-        ax_ts.axvline(time * 1000, color='r', linestyle='--',
-                     linewidth=1.5, alpha=0.7)
+        ax_ts.axvline(
+            time * 1000,
+            color="r",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.7,
+        )
 
     ax_ts.axvline(0, color='k', linestyle='-', linewidth=1)
     ax_ts.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
@@ -535,6 +589,9 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
             ax_bar.set_xlabel('uV')
             ax_bar.set_title(f'{actual_time*1000:.0f} ms')
             ax_bar.axvline(0, color='k', linestyle='-', linewidth=0.5)
+
+    # Apply theme across all axes in the figure
+    _apply_mpl_theme(fig, fig.get_axes(), theme=theme)
 
     if show:
         plt.tight_layout()

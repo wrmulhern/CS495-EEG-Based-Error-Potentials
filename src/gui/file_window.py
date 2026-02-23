@@ -31,6 +31,9 @@ from src.data_processing.data_processor import average_epochs, select_time_windo
 from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint
 from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
+from .themes.light_theme import apply_light_theme
+from .themes.dark_theme import apply_dark_theme
+
 
 class FileWindow(QMainWindow):
     def __init__(self):
@@ -42,6 +45,8 @@ class FileWindow(QMainWindow):
         self.current_epochs = None
         # Shared state for events checkbox across Time Series and Joint Maps
         self.events_checkbox_checked = False
+        # Track current theme for both Qt widgets and Matplotlib figures
+        self.is_dark_mode = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -56,6 +61,9 @@ class FileWindow(QMainWindow):
         self.middleInit()
         # visualize
         self.bottomInit()
+
+        # Ensure initial widget styling matches the global light palette
+        self.apply_light_styles()
 
 
     def topInit(self):
@@ -77,15 +85,6 @@ class FileWindow(QMainWindow):
         # Graph area (placeholder)
         graph_frame = QFrame()
         graph_frame.setFrameShape(QFrame.StyledPanel)
-        graph_frame.setStyleSheet(
-            """
-            QFrame {
-                background: #ffffff;
-                border: 1px solid #dadce0;
-                border-radius: 4px;
-            }
-            """
-        )
         graph_layout = QVBoxLayout(graph_frame)
         graph_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -95,15 +94,26 @@ class FileWindow(QMainWindow):
 
         # Initial placeholder
         ax = self.figure.add_subplot(111)
-        ax.text(0.5, 0.5, 'Load data and click Visualize',
-                ha='center', va='center', fontsize=16, color='#5f6368')
-        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            "Load data and click Visualize",
+            ha="center",
+            va="center",
+            fontsize=16,
+            color="#5f6368",
+        )
+        ax.axis("off")
+
+        # Match the initial Matplotlib background to the current theme
+        self.apply_current_mpl_theme_to_figure(self.figure)
 
         graph_layout.addWidget(self.canvas, stretch=1)
         return graph_frame
 
     def graphOptionsInit(self):
         options_box = QGroupBox("Graph Options")
+        self.options_box = options_box
         options_box.setStyleSheet(
             """
             QGroupBox {
@@ -120,6 +130,15 @@ class FileWindow(QMainWindow):
         options_layout = QVBoxLayout(options_box)
         options_layout.setContentsMargins(14, 16, 14, 14)
         options_layout.setSpacing(14)
+
+        # Dark mode toggle row (top-right, above all other graph options)
+        mode_row = QHBoxLayout()
+        mode_row.addStretch(1)
+        self.dark_mode_toggle = ToggleSwitch("Dark mode")
+        self.dark_mode_toggle.set_dark_mode(self.is_dark_mode)
+        self.dark_mode_toggle.stateChanged.connect(self.on_dark_mode_toggled)
+        mode_row.addWidget(self.dark_mode_toggle, alignment=Qt.AlignRight)
+        options_layout.addLayout(mode_row)
 
         # Epoch inputs row
         epoch_label = QLabel("Epoch in ms")
@@ -222,15 +241,7 @@ class FileWindow(QMainWindow):
     def dropBrowseFileInit(self):
         drop_browse_frame = QFrame()
         drop_browse_frame.setFrameShape(QFrame.StyledPanel)
-        drop_browse_frame.setStyleSheet(
-            """
-            QFrame {
-                background: #ffffff;
-                border: 1px solid #dadce0;
-                border-radius: 4px;
-            }
-            """
-        )
+        self.drop_browse_frame = drop_browse_frame
         drop_browse_layout = QGridLayout(drop_browse_frame)
         drop_browse_layout.setContentsMargins(14, 14, 14, 14)
         drop_browse_layout.setHorizontalSpacing(14)
@@ -298,19 +309,6 @@ class FileWindow(QMainWindow):
         visualize_btn = QPushButton("Visualize")
         visualize_btn.setCursor(Qt.PointingHandCursor)
         visualize_btn.setFixedSize(260, 48)
-        visualize_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #ffffff;
-                border: 1px solid #202124;
-                border-radius: 4px;
-                font-size: 14px;
-                color: #202124;
-            }
-            QPushButton:hover { background: #f6f8fe; }
-            QPushButton:pressed { background: #e8f0fe; }
-            """
-        )
         visualize_btn.clicked.connect(self.visualize)
         return visualize_btn
 
@@ -368,37 +366,67 @@ class FileWindow(QMainWindow):
         """Mark the Visualize button as needing an update by turning it blue."""
         if not hasattr(self, 'visualize_btn'):
             return
-        self.visualize_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #1a73e8;
-                border: 1px solid #1a73e8;
-                border-radius: 4px;
-                font-size: 14px;
-                color: white;
-            }
-            QPushButton:hover { background: #1666c1; }
-            QPushButton:pressed { background: #1450b1; }
-            """
-        )
+        if self.is_dark_mode:
+            self.visualize_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background: #8ab4f8;
+                    border: 1px solid #8ab4f8;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    color: #000000;
+                }
+                QPushButton:hover { background: #669df6; }
+                QPushButton:pressed { background: #4a8af5; }
+                """
+            )
+        else:
+            self.visualize_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background: #1a73e8;
+                    border: 1px solid #1a73e8;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    color: white;
+                }
+                QPushButton:hover { background: #1666c1; }
+                QPushButton:pressed { background: #1450b1; }
+                """
+            )
 
     def reset_visualize_button(self):
         """Reset the Visualize button to its default white state."""
         if not hasattr(self, 'visualize_btn'):
             return
-        self.visualize_btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #ffffff;
-                border: 1px solid #202124;
-                border-radius: 4px;
-                font-size: 14px;
-                color: #202124;
-            }
-            QPushButton:hover { background: #f6f8fe; }
-            QPushButton:pressed { background: #e8f0fe; }
-            """
-        )
+        if self.is_dark_mode:
+            self.visualize_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background: #202124;
+                    border: 1px solid #5f6368;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    color: #e8eaed;
+                }
+                QPushButton:hover { background: #303134; }
+                QPushButton:pressed { background: #3c4043; }
+                """
+            )
+        else:
+            self.visualize_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background: #ffffff;
+                    border: 1px solid #202124;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    color: #202124;
+                }
+                QPushButton:hover { background: #f6f8fe; }
+                QPushButton:pressed { background: #e8f0fe; }
+                """
+            )
     def on_events_checkbox_state_changed(self, state):
         """Track checkbox state (shared across Time Series and Joint Maps)."""
         self.events_checkbox_checked = self.events_checkbox.isChecked()
@@ -457,18 +485,29 @@ class FileWindow(QMainWindow):
 
             graph_type = opts['graph_type']
 
+            theme = "dark" if self.is_dark_mode else "light"
+
             if graph_type == "ErrP Time Series":
-                fig = plot_evoked(evoked, 
-                                 window_title="ErrP Time Series", 
-                                 display_events_responses=opts['display_events_responses'],
-                                 show=False)
+                fig = plot_evoked(
+                    evoked,
+                    window_title="ErrP Time Series",
+                    display_events_responses=opts["display_events_responses"],
+                    show=False,
+                    theme=theme,
+                )
             elif graph_type == "Topographic Map":  # Using "Topographic Map" for topomaps
                 times = [0.1, 0.2, 0.3]  # Default times in seconds
-                fig = plot_topomap(evoked, times=times, show=False)
+                fig = plot_topomap(evoked, times=times, show=False, theme=theme)
             elif graph_type == "Joint Maps":  # Using "Joint Maps" for joint plot
-                fig = plot_joint(evoked, title="ErrP Analysis", display_events_responses=opts['display_events_responses'], show=False)
+                fig = plot_joint(
+                    evoked,
+                    title="ErrP Analysis",
+                    display_events_responses=opts["display_events_responses"],
+                    show=False,
+                    theme=theme,
+                )
             else:
-                fig = plot_evoked(evoked, show=False)
+                fig = plot_evoked(evoked, show=False, theme=theme)
 
             # STEP 4: EMBED IN GUI
 
@@ -525,12 +564,323 @@ class FileWindow(QMainWindow):
         self.sensor_combo.clear()
         self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])
     
-        # Clear the graph
+        # Clear the graph and restore the placeholder under the current theme
         self.figure.clear()
         ax = self.figure.add_subplot(111)
-        ax.text(0.5, 0.5, 'Load data and click Visualize',
-                ha='center', va='center', fontsize=16, color='#5f6368')
-        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            "Load data and click Visualize",
+            ha="center",
+            va="center",
+            fontsize=16,
+            color="#9aa0a6" if self.is_dark_mode else "#5f6368",
+        )
+        ax.axis("off")
+        self.apply_current_mpl_theme_to_figure(self.figure)
         self.canvas.draw()
     
         print("Files cleared")
+
+    # ---------- Theme handling ----------
+
+    def on_dark_mode_toggled(self, state: int) -> None:
+        """Switch between light and dark themes for the entire GUI."""
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        self.is_dark_mode = bool(state)
+
+        if self.is_dark_mode:
+            apply_dark_theme(app)
+            self.apply_dark_styles()
+        else:
+            apply_light_theme(app)
+            self.apply_light_styles()
+
+        # Restyle existing Matplotlib figure to keep background/text consistent
+        if self.figure is not None:
+            self.apply_current_mpl_theme_to_figure(self.figure)
+            self.canvas.draw_idle()
+
+    def apply_light_styles(self) -> None:
+        """Apply light-mode styles to widgets that use explicit stylesheets."""
+        # Graph frame
+        self.graph_frame.setStyleSheet(
+            """
+            QFrame {
+                background: #ffffff;
+                border: 1px solid #dadce0;
+                border-radius: 4px;
+            }
+            """
+        )
+
+        # Drag/drop + browse frame
+        if hasattr(self, "drop_browse_frame"):
+            self.drop_browse_frame.setStyleSheet(
+                """
+                QFrame {
+                    background: #ffffff;
+                    border: 1px solid #dadce0;
+                    border-radius: 4px;
+                }
+                """
+            )
+        # Drop zone interior
+        if hasattr(self, "drop_zone"):
+            self.drop_zone.set_dark_mode(False)
+
+        # Group box title / label colors
+        if hasattr(self, "options_box"):
+            self.options_box.setStyleSheet(
+                """
+                QGroupBox {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #202124;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px 0 4px;
+                    color: #202124;
+                }
+                """
+            )
+
+        # Labels
+        for label in self.findChildren(QLabel):
+            # Keep semantic differences (primary vs secondary text) roughly intact
+            style = label.styleSheet() or ""
+            style = style.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
+            label.setStyleSheet(style)
+
+        # Files label (secondary text)
+        self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
+
+        # Text fields and combos
+        for line_edit in self.findChildren(QLineEdit):
+            line_edit.setStyleSheet(
+                """
+                QLineEdit {
+                    background: #ffffff;
+                    color: #202124;
+                    border: 1px solid #dadce0;
+                    border-radius: 4px;
+                }
+                """
+            )
+        for combo in self.findChildren(QComboBox):
+            combo.setStyleSheet(
+                """
+                QComboBox {
+                    background: #ffffff;
+                    color: #202124;
+                    border: 1px solid #dadce0;
+                    border-radius: 4px;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 18px;
+                    border-left: 1px solid #dadce0;
+                }
+                """
+            )
+
+        # Events checkbox (indicator + text)
+        self.events_checkbox.setStyleSheet(
+            """
+            QCheckBox {
+                font-size: 12px;
+                color: #202124;
+            }
+            """
+        )
+
+        # Clear button (destructive accent)
+        self.clear_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #d93025;
+                border-radius: 4px;
+                color: #d93025;
+                font-size: 16px;
+            }
+            QPushButton:hover { background: #fce8e6; }
+            """
+        )
+
+        # Toggles
+        self.live_toggle.set_dark_mode(False)
+        self.dark_mode_toggle.set_dark_mode(False)
+
+        # Visualize button baseline
+        self.reset_visualize_button()
+
+    def apply_dark_styles(self) -> None:
+        """Apply dark-mode styles to widgets that use explicit stylesheets."""
+        # Graph frame
+        self.graph_frame.setStyleSheet(
+            """
+            QFrame {
+                background: #121212;
+                border: 1px solid #3c4043;
+                border-radius: 4px;
+            }
+            """
+        )
+
+        # Drag/drop + browse frame
+        if hasattr(self, "drop_browse_frame"):
+            self.drop_browse_frame.setStyleSheet(
+                """
+                QFrame {
+                    background: #121212;
+                    border: 1px solid #3c4043;
+                    border-radius: 4px;
+                }
+                """
+            )
+        # Drop zone interior
+        if hasattr(self, "drop_zone"):
+            self.drop_zone.set_dark_mode(True)
+
+        # Group box title / label colors
+        if hasattr(self, "options_box"):
+            self.options_box.setStyleSheet(
+                """
+                QGroupBox {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #e8eaed;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px 0 4px;
+                    color: #e8eaed;
+                }
+                """
+            )
+
+        # Labels
+        for label in self.findChildren(QLabel):
+            style = label.styleSheet() or ""
+            # Primary text becomes near-white, secondary text slightly dimmer
+            style = style.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
+            label.setStyleSheet(style)
+
+        # Files label (secondary text)
+        self.files_label.setStyleSheet("color: #9aa0a6; font-size: 11px;")
+
+        # Text fields and combos
+        for line_edit in self.findChildren(QLineEdit):
+            line_edit.setStyleSheet(
+                """
+                QLineEdit {
+                    background: #202124;
+                    color: #e8eaed;
+                    border: 1px solid #5f6368;
+                    border-radius: 4px;
+                }
+                """
+            )
+        for combo in self.findChildren(QComboBox):
+            combo.setStyleSheet(
+                """
+                QComboBox {
+                    background: #202124;
+                    color: #e8eaed;
+                    border: 1px solid #5f6368;
+                    border-radius: 4px;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 18px;
+                    border-left: 1px solid #5f6368;
+                }
+                """
+            )
+
+        # Events checkbox (indicator + text) for dark background
+        self.events_checkbox.setStyleSheet(
+            """
+            QCheckBox {
+                font-size: 12px;
+                color: #e8eaed;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QCheckBox::indicator:unchecked {
+                border-radius: 3px;
+                border: 1px solid #9aa0a6;
+                background: #202124;
+            }
+            QCheckBox::indicator:checked {
+                border-radius: 3px;
+                border: 1px solid #8ab4f8;
+                background: #8ab4f8;
+            }
+            """
+        )
+
+        # Clear button (destructive accent on dark background)
+        self.clear_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #202124;
+                border: 1px solid #f28b82;
+                border-radius: 4px;
+                color: #f28b82;
+                font-size: 16px;
+            }
+            QPushButton:hover { background: #3c4043; }
+            """
+        )
+
+        # Toggles
+        self.live_toggle.set_dark_mode(True)
+        self.dark_mode_toggle.set_dark_mode(True)
+
+        # Visualize button baseline
+        self.reset_visualize_button()
+
+    def apply_current_mpl_theme_to_figure(self, fig: Figure) -> None:
+        """
+        Harmonize a Matplotlib figure with the current light/dark theme.
+
+        This updates backgrounds, axis colors, and text colors without
+        changing the data colors chosen inside the visualization helpers.
+        """
+        if fig is None:
+            return
+
+        if self.is_dark_mode:
+            bg_color = "#121212"
+            axis_bg = "#121212"
+            text_color = "#e8eaed"
+            grid_color = "#3c4043"
+        else:
+            bg_color = "#ffffff"
+            axis_bg = "#ffffff"
+            text_color = "#202124"
+            grid_color = "#dadce0"
+
+        fig.patch.set_facecolor(bg_color)
+
+        for ax in fig.get_axes():
+            ax.set_facecolor(axis_bg)
+            ax.tick_params(colors=text_color)
+            ax.xaxis.label.set_color(text_color)
+            ax.yaxis.label.set_color(text_color)
+            ax.title.set_color(text_color)
+            ax.grid(color=grid_color, alpha=0.3)
+            for spine in ax.spines.values():
+                spine.set_color(grid_color)
