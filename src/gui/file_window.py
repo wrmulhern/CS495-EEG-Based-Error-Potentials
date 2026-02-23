@@ -40,6 +40,8 @@ class FileWindow(QMainWindow):
 
         self.selected_files: List[str] = []
         self.current_epochs = None
+        # Shared state for events checkbox across Time Series and Joint Maps
+        self.events_checkbox_checked = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -129,10 +131,12 @@ class FileWindow(QMainWindow):
         self.epoch_start = QLineEdit()
         self.epoch_start.setPlaceholderText("Start")
         self.epoch_start.setFixedWidth(110)
+        self.epoch_start.textChanged.connect(self.mark_visualize_button_needs_update)
 
         self.epoch_end = QLineEdit()
         self.epoch_end.setPlaceholderText("End")
         self.epoch_end.setFixedWidth(110)
+        self.epoch_end.textChanged.connect(self.mark_visualize_button_needs_update)
 
         dash = QLabel("—")
         dash.setAlignment(Qt.AlignCenter)
@@ -153,6 +157,7 @@ class FileWindow(QMainWindow):
         self.sensor_combo = QComboBox()
         self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])  # placeholder
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.sensor_combo.currentTextChanged.connect(self.mark_visualize_button_needs_update)
 
         options_layout.addWidget(sensor_label)
         options_layout.addWidget(self.sensor_combo)
@@ -164,14 +169,25 @@ class FileWindow(QMainWindow):
         self.graph_type_combo = QComboBox()
         self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Map", "Joint Maps"])  # placeholder
         self.graph_type_combo.currentTextChanged.connect(self.on_graph_type_changed)
+        self.graph_type_combo.currentTextChanged.connect(self.mark_visualize_button_needs_update)
 
         options_layout.addWidget(graph_type_label)
         options_layout.addWidget(self.graph_type_combo)
 
+        # Container for Events checkbox (can be hidden/shown)
+        self.events_checkbox_container = QWidget()
+        events_container_layout = QVBoxLayout(self.events_checkbox_container)
+        events_container_layout.setContentsMargins(0, 0, 0, 0)
+        events_container_layout.setSpacing(0)
+
         # Checkbox
         self.events_checkbox = QCheckBox("Display Events and Responses")
         self.events_checkbox.setStyleSheet("font-size: 12px; color: #202124;")
-        options_layout.addWidget(self.events_checkbox)
+        self.events_checkbox.stateChanged.connect(self.on_events_checkbox_state_changed)
+        self.events_checkbox.stateChanged.connect(self.mark_visualize_button_needs_update)
+        events_container_layout.addWidget(self.events_checkbox)
+
+        options_layout.addWidget(self.events_checkbox_container)
 
         options_layout.addStretch(1)
         return options_box
@@ -340,11 +356,52 @@ class FileWindow(QMainWindow):
                     print(f"Loaded {len(self.current_epochs.ch_names)} channels")
                 except Exception as e:
                     print(f"Could not auto-load file: {e}")
+            
+            # Mark visualize button as needing update
+            self.mark_visualize_button_needs_update()
 
         else:
             self.files_label.setText("No files selected")
 
     # ---------- Visualize stub ----------
+    def mark_visualize_button_needs_update(self):
+        """Mark the Visualize button as needing an update by turning it blue."""
+        if not hasattr(self, 'visualize_btn'):
+            return
+        self.visualize_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #1a73e8;
+                border: 1px solid #1a73e8;
+                border-radius: 4px;
+                font-size: 14px;
+                color: white;
+            }
+            QPushButton:hover { background: #1666c1; }
+            QPushButton:pressed { background: #1450b1; }
+            """
+        )
+
+    def reset_visualize_button(self):
+        """Reset the Visualize button to its default white state."""
+        if not hasattr(self, 'visualize_btn'):
+            return
+        self.visualize_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #202124;
+                border-radius: 4px;
+                font-size: 14px;
+                color: #202124;
+            }
+            QPushButton:hover { background: #f6f8fe; }
+            QPushButton:pressed { background: #e8f0fe; }
+            """
+        )
+    def on_events_checkbox_state_changed(self, state):
+        """Track checkbox state (shared across Time Series and Joint Maps)."""
+        self.events_checkbox_checked = self.events_checkbox.isChecked()
     def visualize(self):
         if not self.selected_files:
             QMessageBox.warning(self, "No Files", "Please select at least one .set file")
@@ -409,7 +466,7 @@ class FileWindow(QMainWindow):
                 times = [0.1, 0.2, 0.3]  # Default times in seconds
                 fig = plot_topomap(evoked, times=times, show=False)
             elif graph_type == "Joint Maps":  # Using "Joint Maps" for joint plot
-                fig = plot_joint(evoked, title="ErrP Analysis", show=False)
+                fig = plot_joint(evoked, title="ErrP Analysis", display_events_responses=opts['display_events_responses'], show=False)
             else:
                 fig = plot_evoked(evoked, show=False)
 
@@ -432,9 +489,29 @@ class FileWindow(QMainWindow):
             print(f"Full error: {e}")
             import traceback
             traceback.print_exc()
+        
+        # Reset the button after successful visualization
+        self.reset_visualize_button()
 
     def on_graph_type_changed(self, graph_type: str):
-        """When Topographic Map or Joint Maps is selected, auto-select All Channels."""
+        """
+        When graph type changes:
+        - Show/hide the events checkbox based on graph type
+        - Checkbox state is shared between Time Series and Joint Maps
+        """
+        # Determine if this graph type supports event highlighting
+        supports_events = graph_type in ("ErrP Time Series", "Joint Maps")
+        
+        # Show/hide the checkbox container
+        self.events_checkbox_container.setVisible(supports_events)
+        
+        # Restore the shared checkbox state when showing
+        if supports_events:
+            self.events_checkbox.blockSignals(True)
+            self.events_checkbox.setChecked(self.events_checkbox_checked)
+            self.events_checkbox.blockSignals(False)
+        
+        # Auto-select All Channels for Topographic Map and Joint Maps
         if graph_type in ("Topographic Map", "Joint Maps"):
             idx = self.sensor_combo.findText("All Channels")
             if idx >= 0:
