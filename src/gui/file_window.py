@@ -47,6 +47,16 @@ class FileWindow(QMainWindow):
         self.events_checkbox_checked = False
         # Track current theme for both Qt widgets and Matplotlib figures
         self.is_dark_mode = False
+        # Backup list of sensor combo items so we can restore after forcing All Channels
+        self._sensor_items_backup = None
+        # Backup the previously selected sensor text for restore when switching graph types
+        self._sensor_selected_backup = None
+        # Canonical list of all sensors (includes 'All Channels') populated on file load
+        self._all_sensors = ["All Channels"]
+        # Last selected sensor when viewing ErrP Time Series
+        self._last_time_series_selection = "All Channels"
+        # Track last graph type to detect transitions
+        self._last_graph_type = "ErrP Time Series"
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -380,9 +390,10 @@ class FileWindow(QMainWindow):
                     self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
 
                     # Update sensor dropdown: "All Channels" first, then actual channel names
+                    # Populate canonical sensor list and update combo
+                    self._all_sensors = ["All Channels"] + list(self.current_epochs.ch_names)
                     self.sensor_combo.clear()
-                    self.sensor_combo.addItem("All Channels")
-                    self.sensor_combo.addItems(self.current_epochs.ch_names)
+                    self.sensor_combo.addItems(self._all_sensors)
                     self.sensor_combo.setCurrentText("All Channels")
                     print(f"Loaded {len(self.current_epochs.ch_names)} channels")
                 except Exception as e:
@@ -603,25 +614,53 @@ class FileWindow(QMainWindow):
         """
         # Determine if this graph type supports event highlighting
         supports_events = graph_type in ("ErrP Time Series", "Joint Maps")
-        
+
         # Show/hide the checkbox container
         self.events_checkbox_container.setVisible(supports_events)
-        
+
         # Show/hide topomap times (used for Topographic Map and Joint Maps)
         supports_topo_times = graph_type in ("Topographic Map", "Joint Maps")
         self.topo_times_container.setVisible(supports_topo_times)
-        
+
         # Restore the shared checkbox state when showing
         if supports_events:
             self.events_checkbox.blockSignals(True)
             self.events_checkbox.setChecked(self.events_checkbox_checked)
             self.events_checkbox.blockSignals(False)
-        
-        # Auto-select All Channels for Topographic Map and Joint Maps
+
+        # Adjust sensor dropdown: force to All Channels for topo/joint and restore full list when returning
         if graph_type in ("Topographic Map", "Joint Maps"):
-            idx = self.sensor_combo.findText("All Channels")
-            if idx >= 0:
-                self.sensor_combo.setCurrentIndex(idx)
+            # If coming from ErrP Time Series, remember its selected sensor
+            if self._last_graph_type == "ErrP Time Series":
+                self._last_time_series_selection = self.sensor_combo.currentText()
+
+            # Show only All Channels (keep combo enabled so dropdown opens)
+            self.sensor_combo.blockSignals(True)
+            self.sensor_combo.clear()
+            self.sensor_combo.addItem("All Channels")
+            self.sensor_combo.setCurrentIndex(0)
+            self.sensor_combo.setEnabled(True)
+            self.sensor_combo.blockSignals(False)
+        else:
+            # Restore the canonical full sensor list and the previously selected time-series sensor
+            self.sensor_combo.blockSignals(True)
+            self.sensor_combo.setEnabled(True)
+            self.sensor_combo.clear()
+            if self._all_sensors:
+                self.sensor_combo.addItems(self._all_sensors)
+                if self._last_time_series_selection in self._all_sensors:
+                    try:
+                        self.sensor_combo.setCurrentText(self._last_time_series_selection)
+                    except Exception:
+                        self.sensor_combo.setCurrentIndex(0)
+                else:
+                    self.sensor_combo.setCurrentIndex(0)
+            else:
+                self.sensor_combo.addItem("All Channels")
+            self.sensor_combo.blockSignals(False)
+
+        # Update last graph type
+        self._last_graph_type = graph_type
 
     def clear_files(self):
         """Clear all selected files"""
