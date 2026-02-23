@@ -171,7 +171,6 @@ class FileWindow(QMainWindow):
         # Checkbox
         self.events_checkbox = QCheckBox("Display Events and Responses")
         self.events_checkbox.setStyleSheet("font-size: 12px; color: #202124;")
-        self.events_checkbox.stateChanged.connect(self.on_events_checkbox_changed)
         options_layout.addWidget(self.events_checkbox)
 
         options_layout.addStretch(1)
@@ -440,27 +439,6 @@ class FileWindow(QMainWindow):
             idx = self.sensor_combo.findText("All Channels")
             if idx >= 0:
                 self.sensor_combo.setCurrentIndex(idx)
-
-    def on_events_checkbox_changed(self, state):
-        """
-        Called when the 'Display Events and Responses' checkbox is toggled.
-        Re-renders the current plot if data is loaded and graph type is ErrP Time Series.
-        """
-        # Only update if we have data already loaded and visualized
-        if self.current_epochs is None:
-            return
-        
-        # Check if we have a valid figure already displayed
-        if not hasattr(self, 'figure') or self.figure is None:
-            return
-        
-        # Only update for ErrP Time Series graphs (where events/responses are shown)
-        if self.graph_type_combo.currentText() != "ErrP Time Series":
-            return
-        
-        # Re run visualization with current settings
-        print(f"Events/Responses display: {self.events_checkbox.isChecked()}")
-        self.visualize()
 
     def clear_files(self):
         """Clear all selected files"""
