@@ -121,14 +121,18 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     if spatial_colors:
         colors = plt.cm.viridis(np.linspace(0, 1, len(picks)))
     else:
-        colors = ['C0'] * len(picks)
+        colors = None
 
     # Plot each channel
     for idx, ch_idx in enumerate(picks):
         label = evoked.ch_names[ch_idx] if len(picks) <= 20 else None
+        kwargs = dict(label=label, alpha=0.8)
+        if colors is not None:
+            kwargs['color'] = colors[idx]
         ax.plot(evoked.times * 1000,  # Convert to ms
                evoked.data[ch_idx, :] * 1e6,  # Convert to uV
-               color=colors[idx], label=label, alpha=0.8)
+               linewidth=0.8,
+               **kwargs)
 
     # Add GFP if requested
     if gfp:
@@ -139,8 +143,8 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     # ax.axvline(0, color='k', linestyle='--', linewidth=1)
 
     # Event line drawn conditionally below based on display_events_responses
-    if not display_events_responses:
-        ax.axvline(0, color='k', linestyle='--', linewidth=1)
+    # if not display_events_responses:
+    #     ax.axvline(0, color='k', linestyle='--', linewidth=1)
     ax.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
 
     # Display event marker and response windows if requested
