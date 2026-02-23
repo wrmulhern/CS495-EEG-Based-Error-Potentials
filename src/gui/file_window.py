@@ -122,7 +122,7 @@ class FileWindow(QMainWindow):
         options_layout.setSpacing(14)
 
         # Epoch inputs row
-        epoch_label = QLabel("Epoch in ms")
+        epoch_label = QLabel("Epoch (in ms)")
         epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         epoch_row = QHBoxLayout()
@@ -155,7 +155,7 @@ class FileWindow(QMainWindow):
         sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         self.sensor_combo = QComboBox()
-        self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])  # placeholder
+        self.sensor_combo.addItems(["All Channels"]) #placeholder until we load actual channel names from files
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sensor_combo.currentTextChanged.connect(self.mark_visualize_button_needs_update)
 
@@ -429,10 +429,18 @@ class FileWindow(QMainWindow):
             # STEP 2: PROCESS DATA
 
             # Apply time window filter if specified
-            if opts['epoch_start'] and opts['epoch_end']:
+            if opts['epoch_start'] or opts['epoch_end']:
                 try:
-                    tmin = float(opts['epoch_start']) / 1000  # Convert ms to seconds
-                    tmax = float(opts['epoch_end']) / 1000
+                    # Use the loaded epochs' actual limits as defaults
+                    tmin = self.current_epochs.tmin
+                    tmax = self.current_epochs.tmax
+                    
+                    # Override with user input if provided
+                    if opts['epoch_start']:
+                        tmin = float(opts['epoch_start']) / 1000  # Convert ms to seconds
+                    if opts['epoch_end']:
+                        tmax = float(opts['epoch_end']) / 1000  # Convert ms to seconds
+                    
                     print(f"Selecting time window: {tmin} to {tmax} s")
                     epochs = select_time_window(epochs, tmin, tmax)
                 except ValueError:
