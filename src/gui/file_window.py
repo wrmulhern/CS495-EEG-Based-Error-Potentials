@@ -193,6 +193,39 @@ class FileWindow(QMainWindow):
         options_layout.addWidget(graph_type_label)
         options_layout.addWidget(self.graph_type_combo)
 
+        # Container for topomap times (visible only for Topographic Map / Joint Maps)
+        self.topo_times_container = QWidget()
+        topo_times_layout = QVBoxLayout(self.topo_times_container)
+        topo_times_layout.setContentsMargins(0, 0, 0, 0)
+        topo_times_layout.setSpacing(6)
+
+        topo_times_label = QLabel("Topomap times (s)")
+        topo_times_label.setStyleSheet("color: #202124; font-size: 12px;")
+        topo_times_layout.addWidget(topo_times_label)
+
+        topo_times_row = QHBoxLayout()
+        topo_times_row.setSpacing(8)
+        self.topo_time_1 = QLineEdit()
+        self.topo_time_1.setPlaceholderText("0.1")
+        self.topo_time_1.setFixedWidth(70)
+        self.topo_time_1.textChanged.connect(self.mark_visualize_button_needs_update)
+        self.topo_time_2 = QLineEdit()
+        self.topo_time_2.setPlaceholderText("0.2")
+        self.topo_time_2.setFixedWidth(70)
+        self.topo_time_2.textChanged.connect(self.mark_visualize_button_needs_update)
+        self.topo_time_3 = QLineEdit()
+        self.topo_time_3.setPlaceholderText("0.3")
+        self.topo_time_3.setFixedWidth(70)
+        self.topo_time_3.textChanged.connect(self.mark_visualize_button_needs_update)
+        topo_times_row.addWidget(self.topo_time_1)
+        topo_times_row.addWidget(self.topo_time_2)
+        topo_times_row.addWidget(self.topo_time_3)
+        topo_times_row.addStretch(1)
+        topo_times_layout.addLayout(topo_times_row)
+
+        options_layout.addWidget(self.topo_times_container)
+        self.topo_times_container.setVisible(False)
+
         # Container for Events checkbox (can be hidden/shown)
         self.events_checkbox_container = QWidget()
         events_container_layout = QVBoxLayout(self.events_checkbox_container)
@@ -496,11 +529,13 @@ class FileWindow(QMainWindow):
                     theme=theme,
                 )
             elif graph_type == "Topographic Map":  # Using "Topographic Map" for topomaps
-                times = [0.1, 0.2, 0.3]  # Default times in seconds
+                times = self._parse_topomap_times()
                 fig = plot_topomap(evoked, times=times, show=False, theme=theme)
             elif graph_type == "Joint Maps":  # Using "Joint Maps" for joint plot
+                times = self._parse_topomap_times()
                 fig = plot_joint(
                     evoked,
+                    times=times,
                     title="ErrP Analysis",
                     display_events_responses=opts["display_events_responses"],
                     show=False,
@@ -532,10 +567,30 @@ class FileWindow(QMainWindow):
         # Reset the button after successful visualization
         self.reset_visualize_button()
 
+    def _parse_topomap_times(self) -> List[float]:
+        """
+        Parse the three topomap time fields (seconds). Empty means use default.
+        Returns a list of 1–3 times in seconds; invalid input falls back to [0.1, 0.2, 0.3].
+        """
+        defaults = [0.1, 0.2, 0.3]
+        widgets = [self.topo_time_1, self.topo_time_2, self.topo_time_3]
+        times = []
+        for i, w in enumerate(widgets):
+            t = w.text().strip()
+            if not t:
+                times.append(defaults[i])
+                continue
+            try:
+                times.append(float(t))
+            except ValueError:
+                return defaults
+        return times if times else defaults
+
     def on_graph_type_changed(self, graph_type: str):
         """
         When graph type changes:
         - Show/hide the events checkbox based on graph type
+        - Show/hide the topomap times inputs for Topographic Map / Joint Maps
         - Checkbox state is shared between Time Series and Joint Maps
         """
         # Determine if this graph type supports event highlighting
@@ -543,6 +598,10 @@ class FileWindow(QMainWindow):
         
         # Show/hide the checkbox container
         self.events_checkbox_container.setVisible(supports_events)
+        
+        # Show/hide topomap times (used for Topographic Map and Joint Maps)
+        supports_topo_times = graph_type in ("Topographic Map", "Joint Maps")
+        self.topo_times_container.setVisible(supports_topo_times)
         
         # Restore the shared checkbox state when showing
         if supports_events:
@@ -874,6 +933,10 @@ class FileWindow(QMainWindow):
             grid_color = "#dadce0"
 
         fig.patch.set_facecolor(bg_color)
+
+        # Update figure-level suptitle color (e.g., "Topographic Maps") if present
+        if hasattr(fig, "_suptitle") and fig._suptitle is not None:
+            fig._suptitle.set_color(text_color)
 
         for ax in fig.get_axes():
             ax.set_facecolor(axis_bg)
