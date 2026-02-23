@@ -155,7 +155,7 @@ class FileWindow(QMainWindow):
         sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         self.sensor_combo = QComboBox()
-        self.sensor_combo.addItems(["All Channels"]) #placeholder until we load actual channel names from files
+        self.sensor_combo.addItems(["All Channels"])
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sensor_combo.currentTextChanged.connect(self.mark_visualize_button_needs_update)
 
@@ -531,7 +531,7 @@ class FileWindow(QMainWindow):
         self.current_epochs = None
         self.files_label.setText("No files selected")
         self.sensor_combo.clear()
-        self.sensor_combo.addItems(["All Channels", "Sensor A", "Sensor B", "Sensor C"])
+        self.sensor_combo.addItems(["All Channels"])
     
         # Clear the graph
         self.figure.clear()
@@ -540,5 +540,8 @@ class FileWindow(QMainWindow):
                 ha='center', va='center', fontsize=16, color='#5f6368')
         ax.axis('off')
         self.canvas.draw()
+        
+        # Reset the Visualize button to white (no files to visualize)
+        self.reset_visualize_button()
     
         print("Files cleared")
