@@ -395,6 +395,17 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     if not isinstance(times, (list, np.ndarray)):
         times = [times]
 
+    # Filter to only times actually within the data range
+    time_min_s = evoked.times[0]
+    time_max_s = evoked.times[-1]
+    times = [t for t in times if time_min_s <= t <= time_max_s]
+    if not times:
+        # Fallback: evenly spaced within actual range
+        times = list(np.linspace(time_min_s, time_max_s, 3))
+
+    if not isinstance(times, (list, np.ndarray)):
+        times = [times]
+
     # Create figure with custom layout
     n_topos = len(times)
     fig = plt.figure(figsize=(14, 8))
@@ -411,17 +422,24 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
         ax_ts.plot(evoked.times * 1000, evoked.data[ch_idx, :] * 1e6,
                   alpha=0.5, linewidth=0.8)
 
-    # Mark time points for the topographic maps below (always show)
+    # Mark time points for the topographic maps below (only if in view)
+    time_min_ms = evoked.times[0] * 1000
+    time_max_ms = evoked.times[-1] * 1000
     for time in times:
-        ax_ts.axvline(
-            time * 1000,
-            color="r",
-            linestyle="--",
-            linewidth=1.5,
-            alpha=0.7,
-        )
+        time_ms = time * 1000
+        if time_min_ms <= time_ms <= time_max_ms:
+            ax_ts.axvline(
+                time_ms,
+                color="r",
+                linestyle="--",
+                linewidth=1.5,
+                alpha=0.7,
+            )
 
-    ax_ts.axvline(0, color='k', linestyle='-', linewidth=1)
+    _time_min_ms = evoked.times[0] * 1000
+    _time_max_ms = evoked.times[-1] * 1000
+    if _time_min_ms <= 0 <= _time_max_ms:
+        ax_ts.axvline(0, color='k', linestyle='-', linewidth=1)
     ax_ts.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
     ax_ts.set_xlabel('Time (ms)')
     ax_ts.set_ylabel('Amplitude (uV)')
