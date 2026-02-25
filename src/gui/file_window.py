@@ -1,6 +1,7 @@
 import os
 from typing import List
 
+import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -151,8 +152,8 @@ class FileWindow(QMainWindow):
         options_layout.addLayout(mode_row)
 
         # Epoch inputs row
-        epoch_label = QLabel("Epoch (in ms)")
-        epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.epoch_label = QLabel("Epoch (in ms)")
+        self.epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
 
         epoch_row = QHBoxLayout()
         epoch_row.setSpacing(10)
@@ -176,7 +177,7 @@ class FileWindow(QMainWindow):
         epoch_row.addWidget(self.epoch_end)
         epoch_row.addStretch(1)
 
-        options_layout.addWidget(epoch_label)
+        options_layout.addWidget(self.epoch_label)
         options_layout.addLayout(epoch_row)
 
         # Sensor dropdown
@@ -390,7 +391,7 @@ class FileWindow(QMainWindow):
                     self.current_epochs = read_epochs_eeglab_minimal(self.selected_files[0], verbose=False)
 
                     # Update sensor dropdown: "All Channels" first, then actual channel names
-                    # Populate canonical sensor list and update combo
+                    # Populate sensor list and update combo
                     self._all_sensors = ["All Channels"] + list(self.current_epochs.ch_names)
                     self.sensor_combo.clear()
                     self.sensor_combo.addItems(self._all_sensors)
@@ -471,19 +472,23 @@ class FileWindow(QMainWindow):
                 QPushButton:pressed { background: #e8f0fe; }
                 """
             )
+
     def on_events_checkbox_state_changed(self, state):
         """Track checkbox state (shared across Time Series and Joint Maps)."""
         self.events_checkbox_checked = self.events_checkbox.isChecked()
+
     def visualize(self):
         if not self.selected_files:
             QMessageBox.warning(self, "No Files", "Please select at least one .set file")
             return
 
+        graph_type = self.graph_type_combo.currentText()
+
         opts = {
             "epoch_start": self.epoch_start.text().strip(),
             "epoch_end": self.epoch_end.text().strip(),
             "sensor": self.sensor_combo.currentText(),
-            "graph_type": self.graph_type_combo.currentText(),
+            "graph_type": graph_type,
             "display_events_responses": self.events_checkbox.isChecked(),
             "live_mode": self.live_toggle.isChecked(),
             "files": list(self.selected_files),
@@ -500,19 +505,19 @@ class FileWindow(QMainWindow):
 
             # STEP 2: PROCESS DATA
 
-            # Apply time window filter if specified
-            if opts['epoch_start'] or opts['epoch_end']:
+            # If topo, do not use the use specificed epoch times
+            if graph_type != "Topographic Map" and (opts['epoch_start'] or opts['epoch_end']):
                 try:
                     # Use the loaded epochs' actual limits as defaults
                     tmin = self.current_epochs.tmin
                     tmax = self.current_epochs.tmax
-                    
+
                     # Override with user input if provided
                     if opts['epoch_start']:
                         tmin = float(opts['epoch_start']) / 1000  # Convert ms to seconds
                     if opts['epoch_end']:
                         tmax = float(opts['epoch_end']) / 1000  # Convert ms to seconds
-                    
+
                     print(f"Selecting time window: {tmin} to {tmax} s")
                     epochs = select_time_window(epochs, tmin, tmax)
                 except ValueError:
@@ -521,7 +526,6 @@ class FileWindow(QMainWindow):
             # Select specific channel if needed (topomap/joint require all channels)
             channel_picks = None
             sensor_name = opts['sensor']
-            graph_type = opts['graph_type']
             needs_all_channels = graph_type in ("Topographic Map", "Joint Maps")
             if not needs_all_channels and sensor_name != "All Channels" and sensor_name in epochs.ch_names:
                 channel_idx = epochs.ch_names.index(sensor_name)
@@ -535,8 +539,6 @@ class FileWindow(QMainWindow):
 
             # STEP 3: VISUALIZE
 
-            graph_type = opts['graph_type']
-
             theme = "dark" if self.is_dark_mode else "light"
 
             if graph_type == "ErrP Time Series":
@@ -547,11 +549,13 @@ class FileWindow(QMainWindow):
                     show=False,
                     theme=theme,
                 )
-            elif graph_type == "Topographic Map":  # Using "Topographic Map" for topomaps
+            elif graph_type == "Topographic Map":
                 times = self._parse_topomap_times()
                 fig = plot_topomap(evoked, times=times, show=False, theme=theme)
-            elif graph_type == "Joint Maps":  # Using "Joint Maps" for joint plot
+
+            elif graph_type == "Joint Maps":
                 times = self._parse_topomap_times()
+                # out of range times handled in plot_joint
                 fig = plot_joint(
                     evoked,
                     times=times,
@@ -589,7 +593,7 @@ class FileWindow(QMainWindow):
     def _parse_topomap_times(self) -> List[float]:
         """
         Parse the three topomap time fields (seconds). Empty means use default.
-        Returns a list of 1–3 times in seconds; invalid input falls back to [0.1, 0.2, 0.3].
+        Returns a list of 1-3 times in seconds; invalid input falls back to [0.1, 0.2, 0.3].
         """
         defaults = [0.1, 0.2, 0.3]
         widgets = [self.topo_time_1, self.topo_time_2, self.topo_time_3]
@@ -611,6 +615,7 @@ class FileWindow(QMainWindow):
         - Show/hide the events checkbox based on graph type
         - Show/hide the topomap times inputs for Topographic Map / Joint Maps
         - Checkbox state is shared between Time Series and Joint Maps
+        - Epoch window is DISABLED for Topographic Map (full range required)
         """
         # Determine if this graph type supports event highlighting
         supports_events = graph_type in ("ErrP Time Series", "Joint Maps")
@@ -628,6 +633,61 @@ class FileWindow(QMainWindow):
             self.events_checkbox.setChecked(self.events_checkbox_checked)
             self.events_checkbox.blockSignals(False)
 
+        # Disable epoch input for Topo Map
+        is_topo_only = graph_type == "Topographic Map"
+        self.epoch_start.setEnabled(not is_topo_only)
+        self.epoch_end.setEnabled(not is_topo_only)
+        if is_topo_only:
+            # Clear any values the user had entered and show hint placeholders
+            self.epoch_start.blockSignals(True)
+            self.epoch_end.blockSignals(True)
+            self.epoch_start.clear()
+            self.epoch_end.clear()
+            self.epoch_start.setPlaceholderText("Full range")
+            self.epoch_end.setPlaceholderText("Full range")
+            self.epoch_start.blockSignals(False)
+            self.epoch_end.blockSignals(False)
+            # Style as visually disabled so the user knows
+            disabled_style = (
+                "QLineEdit { background: #f1f3f4; color: #9aa0a6; "
+                "border: 1px solid #dadce0; border-radius: 4px; }"
+            )
+            if self.is_dark_mode:
+                disabled_style = (
+                    "QLineEdit { background: #2d2d2d; color: #5f6368; "
+                    "border: 1px solid #3c4043; border-radius: 4px; }"
+                )
+            self.epoch_start.setStyleSheet(disabled_style)
+            self.epoch_end.setStyleSheet(disabled_style)
+            # Also dim the label
+            if hasattr(self, 'epoch_label'):
+                self.epoch_label.setStyleSheet(
+                    "color: #9aa0a6; font-size: 12px;"
+                    if not self.is_dark_mode else
+                    "color: #5f6368; font-size: 12px;"
+                )
+        else:
+            # Restore normal epoch placeholders and styling
+            self.epoch_start.setPlaceholderText("Start")
+            self.epoch_end.setPlaceholderText("End")
+            normal_style = (
+                "QLineEdit { background: #ffffff; color: #202124; "
+                "border: 1px solid #dadce0; border-radius: 4px; }"
+            )
+            if self.is_dark_mode:
+                normal_style = (
+                    "QLineEdit { background: #202124; color: #e8eaed; "
+                    "border: 1px solid #5f6368; border-radius: 4px; }"
+                )
+            self.epoch_start.setStyleSheet(normal_style)
+            self.epoch_end.setStyleSheet(normal_style)
+            if hasattr(self, 'epoch_label'):
+                self.epoch_label.setStyleSheet(
+                    "color: #202124; font-size: 12px;"
+                    if not self.is_dark_mode else
+                    "color: #e8eaed; font-size: 12px;"
+                )
+
         # Adjust sensor dropdown: force to All Channels for topo/joint and restore full list when returning
         if graph_type in ("Topographic Map", "Joint Maps"):
             # If coming from ErrP Time Series, remember its selected sensor
@@ -642,7 +702,7 @@ class FileWindow(QMainWindow):
             self.sensor_combo.setEnabled(True)
             self.sensor_combo.blockSignals(False)
         else:
-            # Restore the canonical full sensor list and the previously selected time-series sensor
+            # Restore the full sensor list and the previously selected time-series sensor
             self.sensor_combo.blockSignals(True)
             self.sensor_combo.setEnabled(True)
             self.sensor_combo.clear()
@@ -712,6 +772,9 @@ class FileWindow(QMainWindow):
         if self.figure is not None:
             self.apply_current_mpl_theme_to_figure(self.figure)
             self.canvas.draw_idle()
+
+        # Re-apply epoch field state in case we're on Topographic Map
+        self.on_graph_type_changed(self.graph_type_combo.currentText())
 
     def apply_light_styles(self) -> None:
         """Apply light-mode styles to widgets that use explicit stylesheets."""
@@ -829,6 +892,10 @@ class FileWindow(QMainWindow):
 
         # Visualize button baseline
         self.reset_visualize_button()
+
+        # Re-apply epoch field disabled state if on Topographic Map
+        if hasattr(self, 'graph_type_combo'):
+            self.on_graph_type_changed(self.graph_type_combo.currentText())
 
     def apply_dark_styles(self) -> None:
         """Apply dark-mode styles to widgets that use explicit stylesheets."""
@@ -961,12 +1028,13 @@ class FileWindow(QMainWindow):
         # Visualize button baseline
         self.reset_visualize_button()
 
+        # Reapply epoch field disabled state if on Topographic Map
+        if hasattr(self, 'graph_type_combo'):
+            self.on_graph_type_changed(self.graph_type_combo.currentText())
+
     def apply_current_mpl_theme_to_figure(self, fig: Figure) -> None:
         """
         Harmonize a Matplotlib figure with the current light/dark theme.
-
-        This updates backgrounds, axis colors, and text colors without
-        changing the data colors chosen inside the visualization helpers.
         """
         if fig is None:
             return
@@ -984,7 +1052,6 @@ class FileWindow(QMainWindow):
 
         fig.patch.set_facecolor(bg_color)
 
-        # Update figure-level suptitle color (e.g., "Topographic Maps") if present
         if hasattr(fig, "_suptitle") and fig._suptitle is not None:
             fig._suptitle.set_color(text_color)
 

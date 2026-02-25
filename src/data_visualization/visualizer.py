@@ -12,9 +12,6 @@ from scipy.interpolate import griddata
 def _apply_mpl_theme(fig, axes, theme: str = "light"):
     """
     Apply a light or dark theme to a Matplotlib figure used by the GUI.
-
-    This keeps plot styling consistent with the Qt palette without changing
-    the underlying data colors.
     """
     if isinstance(axes, (list, tuple, np.ndarray)):
         axes_list = list(axes)
@@ -34,8 +31,6 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
 
     fig.patch.set_facecolor(bg_color)
 
-    # Color figure-level suptitle (e.g., "Topographic Maps") when present
-    # Matplotlib stores this as a private attribute on the Figure.
     if hasattr(fig, "_suptitle") and fig._suptitle is not None:
         fig._suptitle.set_color(text_color)
 
@@ -53,16 +48,6 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
 def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, theme: str = "light"):
     """
     Plot all channels for all epochs (butterfly plot).
-
-    Parameters:
-        epochs: EpochsData object
-        picks: channels to plot (None = all)
-        scalings: scaling factor for display
-        title: plot title
-        show: whether to display the plot
-
-    Returns:
-        matplotlib figure
     """
     if picks is None:
         picks = range(len(epochs.ch_names))
@@ -71,8 +56,8 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, them
 
     for epoch_idx in range(epochs.data.shape[0]):
         for ch_idx in picks:
-            ax.plot(epochs.times * 1000,  # Convert to ms
-                   epochs.data[epoch_idx, ch_idx, :] * 1e6,  # Convert to uV
+            ax.plot(epochs.times * 1000,
+                   epochs.data[epoch_idx, ch_idx, :] * 1e6,
                    alpha=0.3, linewidth=0.5)
 
     ax.axvline(0, color='k', linestyle='--', linewidth=1, label='Event onset')
@@ -96,150 +81,82 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
                 display_events_responses=False, show=True, theme: str = "light"):
     """
     Plot evoked response (ERP/ErrP).
-
-    Parameters:
-        evoked: EvokedData object
-        picks: channels to plot (None = all)
-        spatial_colors: use different colors per channel
-        gfp: show global field power
-        window_title: figure window title
-        scalings: dict of scaling factors
-        titles: channel titles
-        show: whether to display the plot
-        display_events_responses: if True, show event marker and response window
-        show: whether to display the plot
-
-    Returns:
-        matplotlib figure
     """
     if picks is None:
         picks = range(len(evoked.ch_names))
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Get colors
     if spatial_colors:
         colors = plt.cm.viridis(np.linspace(0, 1, len(picks)))
     else:
         colors = None
 
-    # Plot each channel
     for idx, ch_idx in enumerate(picks):
         label = evoked.ch_names[ch_idx] if len(picks) <= 20 else None
         kwargs = dict(label=label, alpha=0.8)
         if colors is not None:
             kwargs['color'] = colors[idx]
-        ax.plot(evoked.times * 1000,  # Convert to ms
-               evoked.data[ch_idx, :] * 1e6,  # Convert to uV
+        ax.plot(evoked.times * 1000,
+               evoked.data[ch_idx, :] * 1e6,
                linewidth=0.8,
                **kwargs)
 
-    # Add GFP if requested
     if gfp:
         gfp_data = np.std(evoked.data[picks, :], axis=0) * 1e6
         ax.plot(evoked.times * 1000, gfp_data, 'k--', linewidth=2,
                label='GFP', alpha=0.6)
 
-    # ax.axvline(0, color='k', linestyle='--', linewidth=1)
-
-    # Event line drawn conditionally below based on display_events_responses
-    # if not display_events_responses:
-    #     ax.axvline(0, color='k', linestyle='--', linewidth=1)
     ax.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
 
-    # Display event marker and response windows if requested
     if display_events_responses:
-        # Get the actual time range being displayed (in ms)
         time_min_ms = evoked.times[0] * 1000
         time_max_ms = evoked.times[-1] * 1000
-        
-        # Event onset marker at 0 ms
+
         if time_min_ms <= 0 <= time_max_ms:
-            ax.axvline(0, color='red', linestyle='--', linewidth=2, 
+            ax.axvline(0, color='red', linestyle='--', linewidth=2,
                        label='Event', zorder=5)
-        
-        # ERN/Ne component window (50-150ms) - only draw if it overlaps with data range
-        ern_start = 50
-        ern_end = 150
-        
-        # Check if ERN window overlaps with displayed time range
+
+        ern_start, ern_end = 50, 150
+        ern_annotation = None
         if ern_start < time_max_ms and ern_end > time_min_ms:
-            # Clip to actual data range
             ern_display_start = max(ern_start, time_min_ms)
             ern_display_end = min(ern_end, time_max_ms)
-            
-            # Only draw lines if they're in range
             if time_min_ms <= ern_start <= time_max_ms:
-                ern_line1 = ax.axvline(ern_start, color='blue', linestyle='--', 
-                                       linewidth=1.5, alpha=0.7)
+                ax.axvline(ern_start, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
             if time_min_ms <= ern_end <= time_max_ms:
-                ern_line2 = ax.axvline(ern_end, color='blue', linestyle='--', 
-                                       linewidth=1.5, alpha=0.7)
-            
-            # Draw shaded region (clipped to visible range)
-            ern_span = ax.axvspan(ern_display_start, ern_display_end, 
-                                  alpha=0.15, color='lightblue', zorder=1)
-            
-            # Create hover annotation
+                ax.axvline(ern_end, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
+            ax.axvspan(ern_display_start, ern_display_end, alpha=0.15, color='lightblue', zorder=1)
             ern_annotation = ax.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
                                          xy=((ern_display_start + ern_display_end) / 2, 0),
-                                         xytext=((ern_display_start + ern_display_end) / 2, 
+                                         xytext=((ern_display_start + ern_display_end) / 2,
                                                 ax.get_ylim()[0] * 0.7),
-                                         ha='center', va='bottom',
-                                         fontsize=10, color='darkblue',
-                                         bbox=dict(boxstyle='round,pad=0.5', 
-                                                  facecolor='white', 
-                                                  edgecolor='blue', 
-                                                  alpha=0.95,
-                                                  linewidth=2),
-                                         visible=False,
-                                         zorder=10)
-        else:
-            ern_annotation = None  # ERN window not in range
-        
-        # Pe component window (200-400ms) - only draw if it overlaps with data range
-        pe_start = 200
-        pe_end = 400
-        
-        # Check if Pe window overlaps with displayed time range
+                                         ha='center', va='bottom', fontsize=10, color='darkblue',
+                                         bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                                  edgecolor='blue', alpha=0.95, linewidth=2),
+                                         visible=False, zorder=10)
+
+        pe_start, pe_end = 200, 400
+        pe_annotation = None
         if pe_start < time_max_ms and pe_end > time_min_ms:
-            # Clip to actual data range
             pe_display_start = max(pe_start, time_min_ms)
             pe_display_end = min(pe_end, time_max_ms)
-            
-            # Only draw lines if they're in range
             if time_min_ms <= pe_start <= time_max_ms:
-                pe_line1 = ax.axvline(pe_start, color='green', linestyle='--', 
-                                      linewidth=1.5, alpha=0.7)
+                ax.axvline(pe_start, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
             if time_min_ms <= pe_end <= time_max_ms:
-                pe_line2 = ax.axvline(pe_end, color='green', linestyle='--', 
-                                      linewidth=1.5, alpha=0.7)
-            
-            # Draw shaded region (clipped to visible range)
-            pe_span = ax.axvspan(pe_display_start, pe_display_end, 
-                                 alpha=0.15, color='lightgreen', zorder=1)
-            
-            # Create hover annotation
+                ax.axvline(pe_end, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
+            ax.axvspan(pe_display_start, pe_display_end, alpha=0.15, color='lightgreen', zorder=1)
             pe_annotation = ax.annotate('Pe\n(200-400ms)\nPositive peak',
                                         xy=((pe_display_start + pe_display_end) / 2, 0),
-                                        xytext=((pe_display_start + pe_display_end) / 2, 
+                                        xytext=((pe_display_start + pe_display_end) / 2,
                                                ax.get_ylim()[1] * 0.7),
-                                        ha='center', va='top',
-                                        fontsize=10, color='darkgreen',
-                                        bbox=dict(boxstyle='round,pad=0.5', 
-                                                 facecolor='white', 
-                                                 edgecolor='green', 
-                                                 alpha=0.95,
-                                                 linewidth=2),
-                                        visible=False,
-                                        zorder=10)
-        else:
-            pe_annotation = None  # Pe window not in range
-        
-        # Set up hover functionality (only if at least one annotation exists)
+                                        ha='center', va='top', fontsize=10, color='darkgreen',
+                                        bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                                 edgecolor='green', alpha=0.95, linewidth=2),
+                                        visible=False, zorder=10)
+
         if ern_annotation is not None or pe_annotation is not None:
             def on_hover(event):
-                # Hide labels if mouse leaves the plot area
                 if event.inaxes != ax:
                     if ern_annotation and ern_annotation.get_visible():
                         ern_annotation.set_visible(False)
@@ -248,22 +165,17 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
                         pe_annotation.set_visible(False)
                         fig.canvas.draw_idle()
                     return
-                
                 mouse_x = event.xdata
-                
-                # Check if mouse is over ERN window
                 if ern_annotation and ern_start <= mouse_x <= ern_end:
                     ern_annotation.set_visible(True)
                     if pe_annotation:
                         pe_annotation.set_visible(False)
                     fig.canvas.draw_idle()
-                # Check if mouse is over Pe window
                 elif pe_annotation and pe_start <= mouse_x <= pe_end:
                     if ern_annotation:
                         ern_annotation.set_visible(False)
                     pe_annotation.set_visible(True)
                     fig.canvas.draw_idle()
-                # Mouse is outside both windows
                 else:
                     changed = False
                     if ern_annotation and ern_annotation.get_visible():
@@ -274,8 +186,6 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
                         changed = True
                     if changed:
                         fig.canvas.draw_idle()
-            
-            # Connect the hover event
             fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
     ax.set_xlabel('Time (ms)')
@@ -299,19 +209,6 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
                  cmap='RdBu_r', sensors=True, contours=6, show=True, theme: str = "light"):
     """
     Plot topographic maps at specific time points.
-
-    Parameters:
-        evoked: EvokedData object
-        times: list of time points to plot (in seconds)
-        ch_type: channel type to plot
-        colorbar: whether to show colorbar
-        cmap: colormap name
-        sensors: whether to show sensor positions
-        contours: number of contour lines
-        show: whether to display the plot
-
-    Returns:
-        matplotlib figure
     """
     if evoked.ch_locs is None:
         print("Warning: No channel locations available. Cannot create topomap.")
@@ -326,18 +223,12 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
     if n_times == 1:
         axes = [axes]
 
-    # Get channel positions
     pos = _get_channel_positions(evoked.ch_locs, evoked.ch_names)
 
     for idx, time in enumerate(times):
-        # Find closest time index
         time_idx = np.argmin(np.abs(evoked.times - time))
         actual_time = evoked.times[time_idx]
-
-        # Get data at this time point
-        data = evoked.data[:, time_idx] * 1e6  # Convert to uV
-
-        # Create topomap
+        data = evoked.data[:, time_idx] * 1e6
         _plot_topomap_single(
             data, pos, axes[idx],
             title=f'{actual_time*1000:.0f} ms',
@@ -345,7 +236,6 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
         )
 
     if colorbar:
-        # Add shared colorbar
         vmin, vmax = data.min(), data.max()
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
@@ -371,74 +261,46 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     """
     Plot evoked response with topomaps at specific time points.
 
-    Parameters:
-        evoked: EvokedData object
-        times: list of time points for topomaps
-        title: figure title
-        ts_args: arguments for time series plot
-        topomap_args: arguments for topomap
-        display_events_responses: if True, show event marker and response windows
-        show: whether to display the plot
-
-    Returns:
-        matplotlib figure
+    Times that fall outside the evoked data range are rendered as a clearly
+    labelled "Out of range" placeholder.
     """
     if times is None:
-        # Default times: peaks in GFP
         gfp = np.std(evoked.data, axis=0)
         peak_indices = signal.find_peaks(gfp, distance=int(0.05 * evoked.sfreq))[0]
         if len(peak_indices) > 0:
-            times = evoked.times[peak_indices[:3]]  # Take first 3 peaks
+            times = evoked.times[peak_indices[:3]]
         else:
             times = [0.1, 0.2, 0.3]
 
     if not isinstance(times, (list, np.ndarray)):
         times = [times]
 
-    # Filter to only times actually within the data range
-    time_min_s = evoked.times[0]
-    time_max_s = evoked.times[-1]
-    times = [t for t in times if time_min_s <= t <= time_max_s]
-    if not times:
-        # Fallback: evenly spaced within actual range
-        times = list(np.linspace(time_min_s, time_max_s, 3))
+    # Requested epoch times
+    t_min_s = evoked.times[0]
+    t_max_s = evoked.times[-1]
 
-    if not isinstance(times, (list, np.ndarray)):
-        times = [times]
-
-    # Create figure with custom layout
     n_topos = len(times)
     fig = plt.figure(figsize=(14, 8))
 
-    # Create grid: top row for time series, bottom for topomaps (extra hspace avoids overlap of x-axis label with topomap titles)
     gs = fig.add_gridspec(2, n_topos, height_ratios=[2, 1],
                          hspace=0.55, wspace=0.3)
 
-    # Time series plot (spans all columns)
+    # ---- Time series (top row, spans all columns) ----
     ax_ts = fig.add_subplot(gs[0, :])
 
-    # Plot all channels
     for ch_idx in range(len(evoked.ch_names)):
         ax_ts.plot(evoked.times * 1000, evoked.data[ch_idx, :] * 1e6,
                   alpha=0.5, linewidth=0.8)
 
-    # Mark time points for the topographic maps below (only if in view)
+    # Mark only in-range topo times with a red dashed line
     time_min_ms = evoked.times[0] * 1000
     time_max_ms = evoked.times[-1] * 1000
     for time in times:
         time_ms = time * 1000
-        if time_min_ms <= time_ms <= time_max_ms:
-            ax_ts.axvline(
-                time_ms,
-                color="r",
-                linestyle="--",
-                linewidth=1.5,
-                alpha=0.7,
-            )
+        if t_min_s <= time <= t_max_s:
+            ax_ts.axvline(time_ms, color="r", linestyle="--", linewidth=1.5, alpha=0.7)
 
-    _time_min_ms = evoked.times[0] * 1000
-    _time_max_ms = evoked.times[-1] * 1000
-    if _time_min_ms <= 0 <= _time_max_ms:
+    if time_min_ms <= 0 <= time_max_ms:
         ax_ts.axvline(0, color='k', linestyle='-', linewidth=1)
     ax_ts.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
     ax_ts.set_xlabel('Time (ms)')
@@ -446,99 +308,52 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     ax_ts.set_title(title or 'Evoked Response with Topographic Maps')
     ax_ts.grid(True, alpha=0.3)
 
-    # Display event marker and response windows if requested
+    # ---- Events / response band overlays ----
     if display_events_responses:
-        # Get the actual time range being displayed (in ms)
-        time_min_ms = evoked.times[0] * 1000
-        time_max_ms = evoked.times[-1] * 1000
-        
-        # Event onset marker at 0 ms
         if time_min_ms <= 0 <= time_max_ms:
-            ax_ts.axvline(0, color='red', linestyle='--', linewidth=2, 
+            ax_ts.axvline(0, color='red', linestyle='--', linewidth=2,
                            label='Event', zorder=5)
-        
-        # ERN/Ne component window (50-150ms) - only draw if it overlaps with data range
-        ern_start = 50
-        ern_end = 150
-        
-        # Check if ERN window overlaps with displayed time range
+
+        ern_start, ern_end = 50, 150
+        ern_annotation = None
         if ern_start < time_max_ms and ern_end > time_min_ms:
-            # Clip to actual data range
             ern_display_start = max(ern_start, time_min_ms)
             ern_display_end = min(ern_end, time_max_ms)
-            
-            # Only draw lines if they're in range
             if time_min_ms <= ern_start <= time_max_ms:
-                ern_line1 = ax_ts.axvline(ern_start, color='blue', linestyle='--', 
-                                           linewidth=1.5, alpha=0.7)
+                ax_ts.axvline(ern_start, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
             if time_min_ms <= ern_end <= time_max_ms:
-                ern_line2 = ax_ts.axvline(ern_end, color='blue', linestyle='--', 
-                                           linewidth=1.5, alpha=0.7)
-            
-            # Draw shaded region (clipped to visible range)
-            ern_span = ax_ts.axvspan(ern_display_start, ern_display_end, 
-                                      alpha=0.15, color='lightblue', zorder=1)
-            
-            # Create hover annotation
+                ax_ts.axvline(ern_end, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
+            ax_ts.axvspan(ern_display_start, ern_display_end, alpha=0.15, color='lightblue', zorder=1)
             ern_annotation = ax_ts.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
                                              xy=((ern_display_start + ern_display_end) / 2, 0),
-                                             xytext=((ern_display_start + ern_display_end) / 2, 
+                                             xytext=((ern_display_start + ern_display_end) / 2,
                                                     ax_ts.get_ylim()[0] * 0.7),
-                                             ha='center', va='bottom',
-                                             fontsize=10, color='darkblue',
-                                             bbox=dict(boxstyle='round,pad=0.5', 
-                                                      facecolor='white', 
-                                                      edgecolor='blue', 
-                                                      alpha=0.95,
-                                                      linewidth=2),
-                                             visible=False,
-                                             zorder=10)
-        else:
-            ern_annotation = None  # ERN window not in range
-        
-        # Pe component window (200-400ms) - only draw if it overlaps with data range
-        pe_start = 200
-        pe_end = 400
-        
-        # Check if Pe window overlaps with displayed time range
+                                             ha='center', va='bottom', fontsize=10, color='darkblue',
+                                             bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                                      edgecolor='blue', alpha=0.95, linewidth=2),
+                                             visible=False, zorder=10)
+
+        pe_start, pe_end = 200, 400
+        pe_annotation = None
         if pe_start < time_max_ms and pe_end > time_min_ms:
-            # Clip to actual data range
             pe_display_start = max(pe_start, time_min_ms)
             pe_display_end = min(pe_end, time_max_ms)
-            
-            # Only draw lines if they're in range
             if time_min_ms <= pe_start <= time_max_ms:
-                pe_line1 = ax_ts.axvline(pe_start, color='green', linestyle='--', 
-                                          linewidth=1.5, alpha=0.7)
+                ax_ts.axvline(pe_start, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
             if time_min_ms <= pe_end <= time_max_ms:
-                pe_line2 = ax_ts.axvline(pe_end, color='green', linestyle='--', 
-                                          linewidth=1.5, alpha=0.7)
-            
-            # Draw shaded region (clipped to visible range)
-            pe_span = ax_ts.axvspan(pe_display_start, pe_display_end, 
-                                     alpha=0.15, color='lightgreen', zorder=1)
-            
-            # Create hover annotation
+                ax_ts.axvline(pe_end, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
+            ax_ts.axvspan(pe_display_start, pe_display_end, alpha=0.15, color='lightgreen', zorder=1)
             pe_annotation = ax_ts.annotate('Pe\n(200-400ms)\nPositive peak',
                                             xy=((pe_display_start + pe_display_end) / 2, 0),
-                                            xytext=((pe_display_start + pe_display_end) / 2, 
+                                            xytext=((pe_display_start + pe_display_end) / 2,
                                                    ax_ts.get_ylim()[1] * 0.7),
-                                            ha='center', va='top',
-                                            fontsize=10, color='darkgreen',
-                                            bbox=dict(boxstyle='round,pad=0.5', 
-                                                     facecolor='white', 
-                                                     edgecolor='green', 
-                                                     alpha=0.95,
-                                                     linewidth=2),
-                                            visible=False,
-                                            zorder=10)
-        else:
-            pe_annotation = None  # Pe window not in range
-        
-        # Set up hover functionality (only if at least one annotation exists)
+                                            ha='center', va='top', fontsize=10, color='darkgreen',
+                                            bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                                     edgecolor='green', alpha=0.95, linewidth=2),
+                                            visible=False, zorder=10)
+
         if ern_annotation is not None or pe_annotation is not None:
             def on_hover(event):
-                # Hide labels if mouse leaves the plot area
                 if event.inaxes != ax_ts:
                     if ern_annotation and ern_annotation.get_visible():
                         ern_annotation.set_visible(False)
@@ -547,22 +362,17 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
                         pe_annotation.set_visible(False)
                         fig.canvas.draw_idle()
                     return
-                
                 mouse_x = event.xdata
-                
-                # Check if mouse is over ERN window
                 if ern_annotation and ern_start <= mouse_x <= ern_end:
                     ern_annotation.set_visible(True)
                     if pe_annotation:
                         pe_annotation.set_visible(False)
                     fig.canvas.draw_idle()
-                # Check if mouse is over Pe window
                 elif pe_annotation and pe_start <= mouse_x <= pe_end:
                     if ern_annotation:
                         ern_annotation.set_visible(False)
                     pe_annotation.set_visible(True)
                     fig.canvas.draw_idle()
-                # Mouse is outside both windows
                 else:
                     changed = False
                     if ern_annotation and ern_annotation.get_visible():
@@ -573,46 +383,43 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
                         changed = True
                     if changed:
                         fig.canvas.draw_idle()
-            
-            # Connect the hover event
             fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
-    # Topomaps
+    # ---- Topomap row (bottom) ----
     if evoked.ch_locs is not None:
         pos = _get_channel_positions(evoked.ch_locs, evoked.ch_names)
+    else:
+        pos = None
 
-        for idx, time in enumerate(times):
-            ax_topo = fig.add_subplot(gs[1, idx])
+    for idx, time in enumerate(times):
+        ax_topo = fig.add_subplot(gs[1, idx])
+        in_range = t_min_s <= time <= t_max_s
 
-            # Find closest time index
+        if not in_range:
+            # Topo not in range, render a placeholder
+            _plot_out_of_range(ax_topo, time_ms=time * 1000,
+                               t_min_ms=t_min_s * 1000, t_max_ms=t_max_s * 1000)
+        elif pos is not None:
             time_idx = np.argmin(np.abs(evoked.times - time))
             actual_time = evoked.times[time_idx]
-
-            # Get data
             data = evoked.data[:, time_idx] * 1e6
-
-            # Plot topomap
             _plot_topomap_single(
                 data, pos, ax_topo,
-                title=f'{actual_time*1000:.0f} ms',
+                title=f'{actual_time * 1000:.0f} ms',
                 cmap='RdBu_r', sensors=True, contours=6
             )
-    else:
-        # If no channel locations, show time slices as bar plots
-        for idx, time in enumerate(times):
-            ax_bar = fig.add_subplot(gs[1, idx])
+        else:
+            # No channel locations — fall back to bar plot
             time_idx = np.argmin(np.abs(evoked.times - time))
             actual_time = evoked.times[time_idx]
             data = evoked.data[:, time_idx] * 1e6
+            ax_topo.barh(range(len(evoked.ch_names)), data)
+            ax_topo.set_yticks(range(len(evoked.ch_names)))
+            ax_topo.set_yticklabels(evoked.ch_names, fontsize=6)
+            ax_topo.set_xlabel('uV')
+            ax_topo.set_title(f'{actual_time * 1000:.0f} ms')
+            ax_topo.axvline(0, color='k', linestyle='-', linewidth=0.5)
 
-            ax_bar.barh(range(len(evoked.ch_names)), data)
-            ax_bar.set_yticks(range(len(evoked.ch_names)))
-            ax_bar.set_yticklabels(evoked.ch_names, fontsize=6)
-            ax_bar.set_xlabel('uV')
-            ax_bar.set_title(f'{actual_time*1000:.0f} ms')
-            ax_bar.axvline(0, color='k', linestyle='-', linewidth=0.5)
-
-    # Apply theme across all axes in the figure
     _apply_mpl_theme(fig, fig.get_axes(), theme=theme)
 
     if show:
@@ -622,7 +429,65 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     return fig
 
 
+# ---------------------------------------------------------------------------
+# Helper: out-of-range placeholder
+# ---------------------------------------------------------------------------
+
+def _plot_out_of_range(ax, time_ms: float, t_min_ms: float, t_max_ms: float):
+    """
+    Render a clearly labelled placeholder in *ax* for a topomap time that falls
+    outside the current epoch window.  Uses a light-grey hatched box so it is
+    visually distinct from real topomaps at a glance.
+    """
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    # Grey hatched rectangle filling the axes
+    rect = patches.FancyBboxPatch(
+        (0.05, 0.05), 0.90, 0.90,
+        boxstyle="round,pad=0.02",
+        linewidth=1.5,
+        edgecolor="#aaaaaa",
+        facecolor="#f0f0f0",
+        hatch="///",
+        zorder=1,
+    )
+    ax.add_patch(rect)
+
+    # Main label
+    ax.text(
+        0.5, 0.58,
+        "Out of range",
+        ha="center", va="center",
+        fontsize=9, fontweight="bold",
+        color="#888888",
+        zorder=2,
+    )
+
+    # Sub-label: the requested time
+    ax.text(
+        0.5, 0.40,
+        f"{time_ms:.0f} ms",
+        ha="center", va="center",
+        fontsize=8,
+        color="#aaaaaa",
+        zorder=2,
+    )
+
+    # Title showing the valid window so the user knows what to type
+    ax.set_title(
+        f"valid: {t_min_ms:.0f}–{t_max_ms:.0f} ms",
+        fontsize=7,
+        color="#aaaaaa",
+        pad=4,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helper functions
+# ---------------------------------------------------------------------------
 
 def _get_channel_positions(ch_locs, ch_names):
     """Extract 2D channel positions from ch_locs."""
@@ -633,12 +498,10 @@ def _get_channel_positions(ch_locs, ch_names):
 
     for idx, ch_name in enumerate(ch_names):
         if hasattr(ch_locs, '__getitem__'):
-            # ch_locs is array-like
             loc = ch_locs[idx]
             if hasattr(loc, 'X') and hasattr(loc, 'Y'):
                 pos[idx] = [loc.X, loc.Y]
             elif hasattr(loc, 'theta') and hasattr(loc, 'radius'):
-                # Convert polar to cartesian
                 theta = np.deg2rad(loc.theta)
                 pos[idx] = [loc.radius * np.cos(theta),
                            loc.radius * np.sin(theta)]
@@ -650,41 +513,26 @@ def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
                         sensors=True, contours=6):
     """
     Plot a single topomap.
-
-    Parameters:
-        data: channel values to plot
-        pos: channel positions (n_channels, 2)
-        ax: matplotlib axis
-        title: subplot title
-        cmap: colormap
-        sensors: whether to show sensor positions
-        contours: number of contour lines
     """
-    # Create interpolation grid
     xi = np.linspace(pos[:, 0].min() - 0.1, pos[:, 0].max() + 0.1, 100)
     yi = np.linspace(pos[:, 1].min() - 0.1, pos[:, 1].max() + 0.1, 100)
     Xi, Yi = np.meshgrid(xi, yi)
 
-    # Interpolate data
     Zi = griddata(pos, data, (Xi, Yi), method='cubic')
 
-    # Plot
     vmax = np.abs(data).max()
     im = ax.contourf(Xi, Yi, Zi, levels=contours, cmap=cmap,
                     vmin=-vmax, vmax=vmax)
 
-    # Add head outline (circle)
     head_radius = 1.0
     circle = patches.Circle((0, 0), head_radius, fill=False,
                            edgecolor='k', linewidth=2)
     ax.add_patch(circle)
 
-    # Add nose
     nose = patches.Wedge((0, head_radius), 0.2, 60, 120,
                         facecolor='k', edgecolor='k')
     ax.add_patch(nose)
 
-    # Show sensors
     if sensors:
         ax.plot(pos[:, 0], pos[:, 1], 'ko', markersize=4)
 
