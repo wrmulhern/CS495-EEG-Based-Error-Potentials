@@ -1,4 +1,6 @@
 # EEG Based Error Potentials Capstone
+Project site: https://aliburkemper12.github.io/Capstone-Project-Site/
+
 
 ## Development Environment Setup
 - The dev environment utilizes uv as the python package manager. To install uv, visit this link: [UV Install](https://docs.astral.sh/uv/getting-started/installation/) and follow the instructions for your operating system and terminal.
