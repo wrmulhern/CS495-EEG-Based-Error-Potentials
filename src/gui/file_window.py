@@ -242,6 +242,18 @@ class FileTab(QWidget):
 
         graph_type = self.graph_type_combo.currentText()
 
+        if graph_type in ("Topographic Map", "Joint Maps"):
+                n_channels = len(self.current_epochs.ch_names)
+                if n_channels < 19:
+                    QMessageBox.warning(
+                        self, "Insufficient Channels",
+                        f"Topographic maps require at least 19 channels for reliable spatial interpolation.\n\n"
+                        f"Your data has {n_channels} channels.\n\n"
+                        f"Please use 'ErrP Time Series' visualization instead.",
+                        QMessageBox.Ok
+                    )
+                    return
+
         opts = {
             "epoch_start": self.epoch_start.text().strip(),
             "epoch_end":   self.epoch_end.text().strip(),
