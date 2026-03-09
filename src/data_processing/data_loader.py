@@ -3,10 +3,12 @@ Data loader for EEGLAB .set files (MNE-free implementation)
 """
 
 import os
+import logging
 from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
+logger = logging.getLogger(__name__)
 
 class Bunch(dict):
     """Dictionary that allows attribute-style access."""
@@ -114,13 +116,13 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     set_file = Path(set_file)
 
     if verbose:
-        print(f"Loading file: {set_file}")
+        logger.debug(f"Loading file: {set_file}")
 
     # Load MATLAB file
     mat = loadmat(set_file, squeeze_me=True, struct_as_record=False)
 
     if verbose:
-        print(f"Keys in .mat file: {list(mat.keys())}")
+        logger.debug(f"Keys in .mat file: {list(mat.keys())}")
 
     # Get EEG structure
     eeg = mat.get("EEG", mat)
@@ -130,14 +132,14 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         eeg = Bunch(**eeg)
 
     if verbose:
-        print(f"EEG structure type: {type(eeg)}")
+        logger.debug(f"EEG structure type: {type(eeg)}")
         if hasattr(eeg, '__dict__'):
-            print(f"EEG attributes: {list(eeg.__dict__.keys())[:10]}...")
+            logger.debug(f"EEG attributes: {list(eeg.__dict__.keys())[:10]}...")
 
     # Check if data is epoched
     trials = getattr(eeg, 'trials', 1)
     if verbose:
-        print(f"Number of trials: {trials}")
+        logger.debug(f"Number of trials: {trials}")
 
     if int(trials) <= 1:
         raise ValueError("File does not contain epochs. This file appears to have continuous data.")
@@ -149,13 +151,13 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     data = eeg.data
 
     if verbose:
-        print(f"Raw data type: {type(data)}")
-        print(f"Data shape/size: {getattr(data, 'shape', getattr(data, 'size', 'unknown'))}")
+        logger.debug(f"Raw data type: {type(data)}")
+        logger.debug(f"Data shape/size: {getattr(data, 'shape', getattr(data, 'size', 'unknown'))}")
 
     # Handle case where data is stored in separate .fdt file
     if isinstance(data, str):
         if verbose:
-            print(f"Data is stored externally in file: {data}")
+            logger.debug(f"Data is stored externally in file: {data}")
 
         # Get data file path
         data_file = Path(data)
@@ -163,7 +165,7 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
             data_file = set_file.parent / data_file
 
         if verbose:
-            print(f"Loading data from: {data_file}")
+            logger.debug(f"Loading data from: {data_file}")
 
         if not data_file.suffix:
             data_file = data_file.with_suffix('.fdt')
@@ -177,13 +179,13 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         n_epochs = int(eeg.trials)
 
         if verbose:
-            print(f"Expected dimensions: {n_channels} channels x {n_times} timepoints x {n_epochs} epochs")
+            logger.debug(f"Expected dimensions: {n_channels} channels x {n_times} timepoints x {n_epochs} epochs")
 
         # Read binary data (EEGLAB uses float32)
         data = np.fromfile(str(data_file), dtype=np.float32)
 
         if verbose:
-            print(f"Loaded {len(data)} values from .fdt file")
+            logger.debug(f"Loaded {len(data)} values from .fdt file")
 
         # Reshape to EEGLAB format: (channels, timepoints, epochs)
         try:
@@ -192,7 +194,7 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
             try:
                 data = data.reshape(n_channels, n_times, n_epochs, order='C')
                 if verbose:
-                    print("Note: Using C-order reshape instead of Fortran-order")
+                    logger.debug("Note: Using C-order reshape instead of Fortran-order")
             except ValueError:
                 raise ValueError(f"Cannot reshape data. Expected {n_channels}x{n_times}x{n_epochs} = "
                                f"{n_channels*n_times*n_epochs}, but got {len(data)} values")
@@ -201,24 +203,24 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     if not isinstance(data, np.ndarray):
         data = np.array(data)
         if verbose:
-            print(f"Converted to numpy array, shape: {data.shape}")
+            logger.debug(f"Converted to numpy array, shape: {data.shape}")
 
     # Ensure we have 3D data
     if data.ndim == 2:
         if verbose:
-            print("Data is 2D, treating as single epoch")
+            logger.debug("Data is 2D, treating as single epoch")
         data = data[np.newaxis, :, :]
     elif data.ndim == 3:
         # Transpose from EEGLAB format (channels, timepoints, epochs)
         # to our format (epochs, channels, timepoints)
         if verbose:
-            print(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
+            logger.debug(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
         data = np.transpose(data, (2, 0, 1))
     else:
         raise ValueError(f"Unexpected data dimensions: {data.shape}")
 
     if verbose:
-        print(f"Final data shape: {data.shape} (epochs, channels, times)")
+        logger.debug(f"Final data shape: {data.shape} (epochs, channels, times)")
 
     # Extract channel information
     ch_names = []
@@ -242,13 +244,13 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         ch_locs = chanlocs
 
         if verbose:
-            print(f"Found {len(ch_names)} channels: {ch_names[:5]}..." if len(ch_names) > 5 else f"Channels: {ch_names}")
+            logger.debug(f"Found {len(ch_names)} channels: {ch_names[:5]}..." if len(ch_names) > 5 else f"Channels: {ch_names}")
     else:
         # No channel info, create default names
         n_channels = data.shape[1]
         ch_names = [f'Ch{i+1}' for i in range(n_channels)]
         if verbose:
-            print(f"No channel info found, created {len(ch_names)} default channel names")
+            logger.debug(f"No channel info found, created {len(ch_names)} default channel names")
 
     # Extract timing information
     if hasattr(eeg, 'srate'):
@@ -265,11 +267,11 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     else:
         xmin = 0.0
         if verbose:
-            print("Warning: Could not find xmin/tmin, assuming 0.0")
+            logger.debug("Warning: Could not find xmin/tmin, assuming 0.0")
 
     if verbose:
-        print(f"Sampling rate: {sfreq} Hz")
-        print(f"Epoch start time: {xmin} seconds")
+        logger.debug(f"Sampling rate: {sfreq} Hz")
+        logger.debug(f"Epoch start time: {xmin} seconds")
 
     # Extract events
     events = None
