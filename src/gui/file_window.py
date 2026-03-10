@@ -735,9 +735,9 @@ class FileWindow(QMainWindow):
             # AUTO-CONVERT CSV TO .SET
             if ap.lower().endswith('.csv'):
                 try:
-                    print(f"Detected CSV file, converting to .set format...")
+                    logger.debug(f"Detected CSV file, converting to .set format...")
                     ap = self.convert_ganglion_csv_to_set(ap)
-                    print(f"Converted to: {ap}")
+                    logger.debug(f"Converted to: {ap}")
                 except Exception as e:
                     QMessageBox.critical(
                         self, "CSV Conversion Error",
@@ -817,9 +817,9 @@ class FileWindow(QMainWindow):
         # Save next to original CSV
         output_path = csv_path.replace('.csv', '_converted.set')
         savemat(output_path, {'EEG': EEG}, appendmat=False)
-    
-        print(f"Converted Ganglion CSV to continuous .set format")
-        print(f"  Duration: {n_samples/sfreq:.1f} seconds ({n_samples} samples)")
+        
+        logger.debug(f"Converted Ganglion CSV to continuous .set format")
+        logger.debug(f"  Duration: {n_samples/sfreq:.1f} seconds ({n_samples} samples)")
     
         return output_path
 
