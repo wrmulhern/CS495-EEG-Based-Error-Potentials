@@ -655,6 +655,20 @@ class FileWindow(QMainWindow):
         live_col.addStretch(1)
         bar.addLayout(live_col, stretch=1)
 
+        # Download Graph button
+        download_col = QVBoxLayout()
+        download_lbl = QLabel("Download Graph")
+        download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        self.download_lbl = download_lbl
+        self.download_btn = QPushButton("…")
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setFixedWidth(70)
+        self.download_btn.clicked.connect(self._download_graph)
+        download_col.addWidget(download_lbl, alignment=Qt.AlignHCenter)
+        download_col.addWidget(self.download_btn, alignment=Qt.AlignHCenter)
+        download_col.addStretch(1)
+        bar.addLayout(download_col, stretch=0)
+
         # Drop + browse frame
         drop_frame = QFrame()
         drop_frame.setFrameShape(QFrame.StyledPanel)
@@ -721,6 +735,33 @@ class FileWindow(QMainWindow):
         )
         if paths:
             self.add_files(paths)
+
+    def _download_graph(self):
+        """Save the currently displayed graph as PNG."""
+        current_tab = self.tab_widget.currentWidget()
+        if not current_tab or not hasattr(current_tab, 'figure'):
+            QMessageBox.warning(self, "No Graph", "No graph is currently displayed.")
+            return
+        
+        # Get save location from user
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Graph As",
+            "",
+            "PNG Files (*.png);;All Files (*.*)"
+        )
+        
+        if filename:
+            try:
+                # Ensure the filename has .png extension
+                if not filename.lower().endswith('.png'):
+                    filename += '.png'
+                
+                # Save the figure
+                current_tab.figure.savefig(filename, dpi=300, bbox_inches='tight')
+                QMessageBox.information(self, "Success", f"Graph saved as {filename}")
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save graph:\n{str(e)}")
 
 
     def add_files(self, paths: List[str]):
