@@ -611,10 +611,27 @@ class FileWindow(QMainWindow):
         bar.addWidget(title_lbl)
         bar.addStretch(1)
 
-        self.dark_mode_toggle = ToggleSwitch("Dark mode")
+        # Live mode toggle (moved up next to Dark mode)
+        live_row = QHBoxLayout()
+        live_lbl = QLabel("Live mode")
+        live_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        self.live_lbl = live_lbl
+        self.live_toggle = ToggleSwitch("")
+        live_row.addWidget(live_lbl)
+        live_row.addWidget(self.live_toggle)
+        bar.addLayout(live_row)
+
+        # Dark mode toggle, with label on the left of the switch
+        dark_row = QHBoxLayout()
+        dark_lbl = QLabel("Dark mode")
+        dark_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        self.dark_lbl = dark_lbl
+        self.dark_mode_toggle = ToggleSwitch("")
         self.dark_mode_toggle.set_dark_mode(False)
         self.dark_mode_toggle.stateChanged.connect(self._on_dark_mode_toggled)
-        bar.addWidget(self.dark_mode_toggle, alignment=Qt.AlignRight)
+        dark_row.addWidget(dark_lbl)
+        dark_row.addWidget(self.dark_mode_toggle)
+        bar.addLayout(dark_row)
 
         self.outer.addLayout(bar)
 
@@ -644,30 +661,8 @@ class FileWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.setSpacing(18)
 
-        # Live mode toggle
-        live_col = QVBoxLayout()
-        live_lbl = QLabel("Live mode")
-        live_lbl.setStyleSheet("font-size: 13px; color: #202124;")
-        self.live_lbl = live_lbl
-        self.live_toggle = ToggleSwitch("")
-        live_col.addWidget(live_lbl)
-        live_col.addWidget(self.live_toggle)
-        live_col.addStretch(1)
-        bar.addLayout(live_col, stretch=1)
-
-        # Download Graph button
-        download_col = QVBoxLayout()
-        download_lbl = QLabel("Download Graph")
-        download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
-        self.download_lbl = download_lbl
-        self.download_btn = QPushButton("…")
-        self.download_btn.setCursor(Qt.PointingHandCursor)
-        self.download_btn.setFixedWidth(70)
-        self.download_btn.clicked.connect(self._download_graph)
-        download_col.addWidget(download_lbl, alignment=Qt.AlignHCenter)
-        download_col.addWidget(self.download_btn, alignment=Qt.AlignHCenter)
-        download_col.addStretch(1)
-        bar.addLayout(download_col, stretch=0)
+        # Left spacer so the drop/browse area can be centered independently
+        bar.addStretch(1)
 
         # Drop + browse frame
         drop_frame = QFrame()
@@ -678,9 +673,26 @@ class FileWindow(QMainWindow):
         df_layout.setHorizontalSpacing(14)
         df_layout.setVerticalSpacing(8)
 
+        # Download Graph button (logically attached to the file loader,
+        # but not part of the outer centering calculation)
+        download_col = QVBoxLayout()
+        download_lbl = QLabel("Download Graph")
+        download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        self.download_lbl = download_lbl
+        self.download_btn = QPushButton("…")
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setFixedWidth(70)
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.clicked.connect(self._download_graph)
+        download_col.addWidget(download_lbl, alignment=Qt.AlignHCenter)
+        download_col.addWidget(self.download_btn, alignment=Qt.AlignHCenter)
+        download_col.addStretch(1)
+        df_layout.addLayout(download_col, 0, 0, 1, 1)
+
+        # Main drop zone occupies the center columns
         self.drop_zone = FileDropFrame()
         self.drop_zone.filesDropped.connect(self.add_files)
-        df_layout.addWidget(self.drop_zone, 0, 0, 1, 3)
+        df_layout.addWidget(self.drop_zone, 0, 1, 1, 3)
 
         # Browse / Clear All column
         side_col = QVBoxLayout()
@@ -713,12 +725,12 @@ class FileWindow(QMainWindow):
         side_col.addWidget(self.clear_btn, alignment=Qt.AlignHCenter)
         side_col.addItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
-        df_layout.addLayout(side_col, 0, 3, 1, 1)
+        df_layout.addLayout(side_col, 0, 4, 1, 1)
 
         self.files_label = QLabel("No files loaded")
         self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
         self.files_label.setWordWrap(True)
-        df_layout.addWidget(self.files_label, 1, 0, 1, 4)
+        df_layout.addWidget(self.files_label, 1, 0, 1, 5)
 
         bar.addWidget(drop_frame, stretch=2)
         bar.addStretch(1)
