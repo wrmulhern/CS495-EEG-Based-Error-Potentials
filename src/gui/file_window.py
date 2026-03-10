@@ -938,14 +938,17 @@ class FileWindow(QMainWindow):
         )
         self._style_clear_btn(dark=False)
 
-        for lbl in [self.title_lbl, self.live_lbl, self.browse_lbl, self.clear_lbl]:
+        for lbl in [self.title_lbl, self.live_lbl, self.dark_lbl,
+                    self.browse_lbl, self.clear_lbl, self.download_lbl]:
             s = lbl.styleSheet()
             s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
             lbl.setStyleSheet(s)
         self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
         self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
 
-        self.browse_btn.setStyleSheet("")  # let Qt default handle it in light
+        # Let Qt defaults handle light-mode button styling
+        self.browse_btn.setStyleSheet("")
+        self.download_btn.setStyleSheet("")
 
     def _apply_window_dark_styles(self):
         self.dark_mode_toggle.set_dark_mode(True)
@@ -958,17 +961,20 @@ class FileWindow(QMainWindow):
         )
         self._style_clear_btn(dark=True)
 
-        for lbl in [self.title_lbl, self.live_lbl, self.browse_lbl, self.clear_lbl]:
+        for lbl in [self.title_lbl, self.live_lbl, self.dark_lbl,
+                    self.browse_lbl, self.clear_lbl, self.download_lbl]:
             s = lbl.styleSheet()
             s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
             lbl.setStyleSheet(s)
         self.files_label.setStyleSheet("color: #9aa0a6; font-size: 11px;")
         self._empty_label.setStyleSheet("color: #5f6368; font-size: 14px;")
 
-        self.browse_btn.setStyleSheet(
+        dark_btn_style = (
             "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
             " border-radius: 4px; } QPushButton:hover { background: #3c4043; }"
         )
+        self.browse_btn.setStyleSheet(dark_btn_style)
+        self.download_btn.setStyleSheet(dark_btn_style)
 
     def _style_clear_btn(self, dark: bool):
         if dark:
