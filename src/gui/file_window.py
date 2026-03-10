@@ -697,32 +697,115 @@ class FileWindow(QMainWindow):
 
 
     def _browse_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "Select .set file(s)", "", "All Files (*.*)")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, 
+            "Select .set or .csv file(s)", 
+            "", 
+            "EEG Files (*.set *.csv);;All Files (*.*)" 
+        )
         if paths:
             self.add_files(paths)
 
+
     def add_files(self, paths: List[str]):
         """
-        Add one tab per new file, loading is lazy
+        Add one tab per new file, loading is lazy.
+        Automatically converts .csv files to .set format.
         """
         added = []
         for p in paths:
             ap = os.path.abspath(p)
+        
+            # AUTO-CONVERT CSV TO .SET
+            if ap.lower().endswith('.csv'):
+                try:
+                    print(f"Detected CSV file, converting to .set format...")
+                    ap = self.convert_ganglion_csv_to_set(ap)
+                    print(f"Converted to: {ap}")
+                except Exception as e:
+                    QMessageBox.critical(
+                        self, "CSV Conversion Error",
+                        f"Could not convert CSV file:\n{os.path.basename(p)}\n\n{str(e)}"
+                    )
+                    continue  # Skip this file
+        
+            # Check if already open
             if ap in self._open_paths:
-                continue  # already open
+                continue
+        
             self._open_paths.append(ap)
-
+        
             tab = FileTab(filepath=ap, is_dark_mode=self.is_dark_mode, parent=self)
             label = os.path.basename(ap)
             self.tab_widget.addTab(tab, label)
             added.append(label)
-
+    
         if added:
-            # Switch to the first newly added tab
             first_new_idx = self.tab_widget.count() - len(added)
             self.tab_widget.setCurrentIndex(first_new_idx)
             self._update_empty_state()
             self._update_files_label()
+
+    def convert_ganglion_csv_to_set(self, csv_path: str) -> str:
+        """
+        Convert Ganglion CSV to EEGLAB .set format.
+        Creates continuous data format (2D: channels × timepoints).
+        Silently handles the conversion - user doesn't need to know.
+        Returns: Path to the converted .set file
+        """
+        import pandas as pd
+        from scipy.io import savemat
+        import numpy as np
+    
+        # Read CSV, skipping header comments
+        df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
+
+        # Extract 4 EEG channels (columns 1-4 in OpenBCI format)
+        # Shape: (4, n_samples)
+        data = df.iloc[:, 1:5].values.T
+
+        data = data / 1e6 # uV -> V
+    
+        # Ganglion specs
+        n_channels = 4
+        sfreq = 200
+        n_samples = data.shape[1]
+    
+        # KEEP AS 2D for continuous data (channels, timepoints)
+        # DO NOT add epoch dimension - let data_loader handle it
+        data_continuous = data.astype(np.float32)
+    
+        # Channel locations
+        ch_locs = [
+            {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
+            {'labels': 'AF7',  'X': -0.6,  'Y': 0.87,  'Z': 0.0, 'theta': -55.0,  'radius': 0.9},
+            {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
+            {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
+        ]
+    
+        # Create EEGLAB structure for CONTINUOUS data
+        EEG = {
+            'data': data_continuous,  # 2D: (channels, timepoints)
+            'setname': 'Ganglion_Recording',
+            'nbchan': n_channels,
+            'pnts': n_samples,      # Total number of timepoints
+            'trials': 1,            # Indicates continuous data
+            'srate': sfreq,
+            'xmin': 0.0,
+            'xmax': n_samples / sfreq,
+            'times': (np.arange(n_samples) / sfreq).tolist(),  # In seconds
+            'chanlocs': ch_locs,
+            'ref': 'common',
+        }
+    
+        # Save next to original CSV
+        output_path = csv_path.replace('.csv', '_converted.set')
+        savemat(output_path, {'EEG': EEG}, appendmat=False)
+    
+        print(f"Converted Ganglion CSV to continuous .set format")
+        print(f"  Duration: {n_samples/sfreq:.1f} seconds ({n_samples} samples)")
+    
+        return output_path
 
     def _close_tab(self, index: int):
         tab: FileTab = self.tab_widget.widget(index)
