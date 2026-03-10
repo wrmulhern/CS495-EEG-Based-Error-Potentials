@@ -144,7 +144,7 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     is_continuous = int(trials) <= 1
 
     if is_continuous and verbose:
-        print("Detected continuous data (will be treated as single epoch)")
+        logger.debug("Detected continuous data (will be treated as single epoch)")
 
     # Extract data
     if not hasattr(eeg, 'data'):
@@ -211,13 +211,13 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     if data.ndim == 2:
         # Continuous data: (channels, timepoints)
         if verbose:
-            print("Data is 2D, treating as single epoch")
+            logger.debug("Data is 2D, treating as single epoch")
         data = data[np.newaxis, :, :]
     elif data.ndim == 3:
         # Epoched data: (channels, timepoints, epochs)
         # Transpose to our format: (epochs, channels, timepoints)
         if verbose:
-            print(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
+            logger.debug(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
         data = np.transpose(data, (2, 0, 1))
     else:
         raise ValueError(f"Unexpected data dimensions: {data.shape}")
