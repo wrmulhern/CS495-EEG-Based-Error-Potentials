@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import List, Optional
 
 import numpy as np
@@ -7,6 +8,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,6 +28,7 @@ from PyQt5.QtWidgets import (
     QWidget,
     QTabWidget,
     QMessageBox,
+    QShortcut,
 )
 
 from src.data_processing.data_loader import read_epochs_eeglab_minimal
@@ -36,6 +39,7 @@ from .utils.checkbox import ToggleSwitch
 from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
 
+logger = logging.getLogger(__name__)
 
 # FileTab: Class for each tab (file) that will be owned in FileWindow
 class FileTab(QWidget):
@@ -204,6 +208,10 @@ class FileTab(QWidget):
         self.visualize_btn.setCursor(Qt.PointingHandCursor)
         self.visualize_btn.setFixedHeight(44)
         self.visualize_btn.clicked.connect(self.visualize)
+
+        self._run_shortcut = QShortcut(QKeySequence(Qt.Key_Return), self)
+        self._run_shortcut.activated.connect(self.visualize_btn.click)
+
         layout.addWidget(self.visualize_btn)
 
         self.reset_visualize_button()
@@ -218,7 +226,7 @@ class FileTab(QWidget):
         if self.current_epochs is not None:
             return True
         try:
-            print(f"[Tab] Loading {self.filepath} ...")
+            logger.debug(f"[Tab] Loading {self.filepath} ...")
             self.current_epochs = read_epochs_eeglab_minimal(self.filepath, verbose=False)
             self._all_sensors = ["All Channels"] + list(self.current_epochs.ch_names)
             self.sensor_combo.blockSignals(True)
@@ -226,7 +234,7 @@ class FileTab(QWidget):
             self.sensor_combo.addItems(self._all_sensors)
             self.sensor_combo.setCurrentText("All Channels")
             self.sensor_combo.blockSignals(False)
-            print(f"[Tab] Loaded {len(self.current_epochs.ch_names)} channels")
+            logger.debug(f"[Tab] Loaded {len(self.current_epochs.ch_names)} channels")
             return True
         except Exception as e:
             QMessageBox.critical(
@@ -274,10 +282,10 @@ class FileTab(QWidget):
                         tmin = float(opts["epoch_start"]) / 1000
                     if opts["epoch_end"]:
                         tmax = float(opts["epoch_end"]) / 1000
-                    print(f"[Tab] Time window: {tmin:.3f}–{tmax:.3f} s")
+                    logger.debug(f"[Tab] Time window: {tmin:.3f}–{tmax:.3f} s")
                     epochs = select_time_window(epochs, tmin, tmax)
                 except ValueError:
-                    print("[Tab] Invalid epoch times, using full range")
+                    logger.warning("[Tab] Invalid epoch times, using full range")
 
             # Channel picks (topo/joint always need all channels)
             channel_picks = None
@@ -285,9 +293,9 @@ class FileTab(QWidget):
             needs_all = graph_type in ("Topographic Map", "Joint Maps")
             if not needs_all and sensor_name != "All Channels" and sensor_name in epochs.ch_names:
                 channel_picks = [epochs.ch_names.index(sensor_name)]
-                print(f"[Tab] Channel: {sensor_name}")
+                logger.debug(f"[Tab] Channel: {sensor_name}")
 
-            print("[Tab] Averaging epochs...")
+            logger.debug("[Tab] Averaging epochs...")
             evoked = average_epochs(epochs, picks=channel_picks)
 
             theme = "dark" if self._is_dark_mode else "light"
@@ -567,7 +575,7 @@ class FileTab(QWidget):
 
 # Owns FileTabs and bottom bar
 class FileWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, file_path: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("ErrP Visualizer")
         self.resize(1280, 760)
@@ -588,6 +596,9 @@ class FileWindow(QMainWindow):
         self._build_bottom_bar()  # drag/drop, browse, clear all
 
         self._apply_window_light_styles()
+
+        if file_path:
+            self.add_files([file_path])
 
     def _build_top_bar(self):
         """Thin bar at the very top"""
@@ -664,6 +675,7 @@ class FileWindow(QMainWindow):
         browse_lbl.setStyleSheet("font-size: 13px; color: #202124;")
         self.browse_lbl = browse_lbl
         self.browse_btn = QPushButton("…")
+        self.browse_btn.setCursor(Qt.PointingHandCursor)
         self.browse_btn.setFixedWidth(70)
         self.browse_btn.clicked.connect(self._browse_files)
 
@@ -673,12 +685,16 @@ class FileWindow(QMainWindow):
         self.clear_lbl = clear_lbl
 
         self.clear_btn = QPushButton("✕")
+        self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setFixedWidth(70)
         self.clear_btn.clicked.connect(self._clear_all_tabs)
         self._style_clear_btn(dark=False)
 
         side_col.addWidget(browse_lbl, alignment=Qt.AlignHCenter)
         side_col.addWidget(self.browse_btn, alignment=Qt.AlignHCenter)
+
+        side_col.addSpacing(4)   # <-- adjust pixels here
+
         side_col.addWidget(clear_lbl, alignment=Qt.AlignHCenter)
         side_col.addWidget(self.clear_btn, alignment=Qt.AlignHCenter)
         side_col.addItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))

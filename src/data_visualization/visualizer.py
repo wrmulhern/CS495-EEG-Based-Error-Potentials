@@ -2,12 +2,14 @@
 Visualization functions for EEG data
 """
 
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import patches
 from scipy import signal
 from scipy.interpolate import griddata
 
+logger = logging.getLogger(__name__)
 
 def _apply_mpl_theme(fig, axes, theme: str = "light"):
     """
@@ -211,8 +213,7 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
     Plot topographic maps at specific time points.
     """
     if evoked.ch_locs is None:
-        print("Warning: No channel locations available. Cannot create topomap.")
-        print("Showing simple time-series plot instead.")
+        logger.warning("No channel locations available; cannot create topomap. Showing simple time-series plot instead.")
         return plot_evoked(evoked, show=show, theme=theme)
 
     if not isinstance(times, (list, np.ndarray)):
