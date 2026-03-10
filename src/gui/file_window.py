@@ -540,7 +540,12 @@ class FileTab(QWidget):
                 "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #8ab4f8; background: #8ab4f8; }"
             )
         else:
-            self.events_checkbox.setStyleSheet("QCheckBox { font-size: 12px; color: #202124; }")
+            self.events_checkbox.setStyleSheet(
+                "QCheckBox { font-size: 12px; color: #202124; }"
+                "QCheckBox::indicator { width: 16px; height: 16px; }"
+                "QCheckBox::indicator:unchecked { border-radius: 3px; border: 1px solid #dadce0; background: #ffffff; }"
+                "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #1a73e8; background: #1a73e8; }"
+            )
 
         # Re-apply epoch field disabled style if currently on Topographic Map
         self._on_graph_type_changed(self.graph_type_combo.currentText())
@@ -946,9 +951,13 @@ class FileWindow(QMainWindow):
         self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
         self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
 
-        # Let Qt defaults handle light-mode button styling
-        self.browse_btn.setStyleSheet("")
-        self.download_btn.setStyleSheet("")
+        light_btn_style = (
+            "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
+            " border-radius: 4px; padding: 4px 8px; }"
+            " QPushButton:hover { background: #f1f3f4; }"
+        )
+        self.browse_btn.setStyleSheet(light_btn_style)
+        self.download_btn.setStyleSheet(light_btn_style)
 
     def _apply_window_dark_styles(self):
         self.dark_mode_toggle.set_dark_mode(True)
@@ -971,7 +980,8 @@ class FileWindow(QMainWindow):
 
         dark_btn_style = (
             "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-            " border-radius: 4px; } QPushButton:hover { background: #3c4043; }"
+            " border-radius: 4px; padding: 4px 8px; }"
+            " QPushButton:hover { background: #3c4043; }"
         )
         self.browse_btn.setStyleSheet(dark_btn_style)
         self.download_btn.setStyleSheet(dark_btn_style)
