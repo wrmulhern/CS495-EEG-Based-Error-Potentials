@@ -7,12 +7,14 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -22,8 +24,10 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpacerItem,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
     QTabWidget,
@@ -41,7 +45,132 @@ from .themes.dark_theme import apply_dark_theme
 
 logger = logging.getLogger(__name__)
 
+LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
+
+#
+#
+# HELP DIALOG
+#
+#
+class HelpDialog(QDialog):
+    """
+    Modal help / how-to dialog accessible from the top bar.
+    Uses QTextBrowser so the content is scrollable and supports basic HTML.
+    """
+
+    _CONTENT = """
+<h2 style="margin-top:0;">ErrP Visualizer &mdash; Quick Guide</h2>
+
+<h3>What is an ErrP?</h3>
+<p>An <b>Error-Related Potential (ErrP)</b> is a brain signal that appears in EEG when
+a person perceives or makes an error. Two main components:</p>
+<ul>
+  <li><b>ERN / Ne</b> (50&ndash;150 ms) &mdash; negative deflection shortly after the error,
+      generated in the anterior cingulate cortex.</li>
+  <li><b>Pe</b> (200&ndash;400 ms) &mdash; positive deflection reflecting conscious error awareness.</li>
+</ul>
+
+<h3>End-to-end workflow</h3>
+<ol>
+  <li>Click <b>Record EEG</b> in the top bar. This opens a web application where you can run
+      a <b>Flanker Task</b> &mdash; a standard cognitive paradigm that reliably elicits ErrP
+      signals using a connected BCI headset.</li>
+  <li>Complete the task. The web app exports your session as a <b>.set</b> or <b>.csv</b> file.</li>
+  <li>Drop that file into this app to visualize your ErrP.</li>
+</ol>
+
+<h3>Loading files</h3>
+<ul>
+  <li>Drag and drop one or more files onto the drop zone, or click <b>Browse (&hellip;)</b>.</li>
+  <li><b>.set</b> files are loaded directly. <b>.csv</b> files (e.g. from OpenBCI Ganglion)
+      are <b>automatically converted</b> to .set format &mdash; no manual steps required.
+      A converted file is saved alongside the original CSV.</li>
+  <li>Each file opens in its own <b>tab</b>. Tabs are fully independent.</li>
+  <li>Files load <b>lazily</b>: data is only read when you first click <b>Visualize</b> on that tab.</li>
+  <li>Close a single tab with its <b>&times;</b> button, or remove all tabs with <b>Clear All</b>.</li>
+</ul>
+
+<h3>Graph types</h3>
+<ul>
+  <li><b>ErrP Time Series</b> &mdash; averaged ERP waveform across all (or selected) channels.
+      Best for inspecting the ERN and Pe components over time.</li>
+  <li><b>Topographic Map</b> &mdash; scalp voltage map at up to three time points.
+      Requires &ge;19 channels. The epoch window is fixed to the full range.</li>
+  <li><b>Joint Maps</b> &mdash; time series and topomaps combined in one figure.
+      Topomap times outside the epoch window show as <i>Out of range</i> placeholders.</li>
+</ul>
+
+<h3>Graph options</h3>
+<ul>
+  <li><b>Epoch (ms)</b> &mdash; crop the time axis. Leave blank for the full epoch.
+      Disabled automatically for Topographic Map.</li>
+  <li><b>Sensor</b> &mdash; plot a single channel instead of all channels (Time Series only).</li>
+  <li><b>Topomap times (s)</b> &mdash; three time points (in seconds) for the scalp maps.</li>
+  <li><b>Display Events and Responses</b> &mdash; overlays the ERN window (blue, 50&ndash;150 ms)
+      and Pe window (green, 200&ndash;400 ms) with hover-activated labels.</li>
+</ul>
+
+<h3>Downloading a graph</h3>
+<p>Click <b>Download Graph</b> in the bottom bar to save the currently displayed figure
+as a high-resolution PNG (300&thinsp;dpi).</p>
+
+<h3>Dark mode</h3>
+<p>Toggle <b>Dark mode</b> in the top bar. The theme applies to both the Qt UI and the
+embedded Matplotlib figures.</p>
+
+<h3>Supported file formats</h3>
+<ul>
+  <li><b>EEGLAB .set</b> &mdash; epoched data with &ge;2 trials. Companion <b>.fdt</b> files
+      are handled automatically.</li>
+  <li><b>.csv</b> &mdash; OpenBCI Ganglion format. Automatically converted to .set on load.</li>
+</ul>
+"""
+
+    def __init__(self, is_dark: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Help — ErrP Visualizer")
+        self.setMinimumSize(620, 540)
+        self.resize(660, 580)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(12)
+
+        self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(True)
+        self.browser.setHtml(self._CONTENT)
+        self.browser.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(self.browser, stretch=1)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self.accept)
+        layout.addWidget(btn_box)
+
+        self._apply_theme(is_dark)
+
+    def _apply_theme(self, is_dark: bool):
+        if is_dark:
+            self.setStyleSheet(
+                "QDialog { background: #1e1e1e; }"
+                "QTextBrowser { background: #1e1e1e; color: #e8eaed; border: none; font-size: 13px; }"
+                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
+                " border-radius: 4px; padding: 4px 16px; }"
+                "QPushButton:hover { background: #3c4043; }"
+            )
+        else:
+            self.setStyleSheet(
+                "QDialog { background: #ffffff; }"
+                "QTextBrowser { background: #ffffff; color: #202124; border: none; font-size: 13px; }"
+                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
+                " border-radius: 4px; padding: 4px 16px; }"
+                "QPushButton:hover { background: #f1f3f4; }"
+            )
+
+#
+#
 # FileTab: Class for each tab (file) that will be owned in FileWindow
+#
+#
 class FileTab(QWidget):
     """
     Self-contained widget representing a single loaded .set file.
@@ -62,6 +191,9 @@ class FileTab(QWidget):
 
         self.filepath = filepath
         self._is_dark_mode = is_dark_mode
+
+        icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "icon.png")
+        self.setWindowIcon(QIcon(icon_path))
 
         # Per tab EEG state, loaded once visualized clicked (lazy loading)
         self.current_epochs = None
@@ -103,11 +235,11 @@ class FileTab(QWidget):
         box = QGroupBox("Graph Options")
         self.options_box = box
         box.setStyleSheet(
-            "QGroupBox { font-size: 13px; font-weight: 600; }"
+            "QGroupBox { font-size: 13px; font-weight: 600; margin-top: 12px; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
         )
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(14, 16, 14, 14)
+        layout.setContentsMargins(14, 28, 14, 14)
         layout.setSpacing(14)
 
         # Epoch inputs
@@ -606,28 +738,44 @@ class FileWindow(QMainWindow):
             self.add_files([file_path])
 
     def _build_top_bar(self):
-        """Thin bar at the very top"""
+        """Top bar: title | [Record EEG] [? Help] | Dark mode"""
         bar = QHBoxLayout()
         bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(14)
 
+        # Title
         title_lbl = QLabel("ErrP Visualizer")
         title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #202124;")
         self.title_lbl = title_lbl
         bar.addWidget(title_lbl)
         bar.addStretch(1)
 
-        # Live mode toggle (moved up next to Dark mode)
-        live_row = QHBoxLayout()
-        live_lbl = QLabel("Live mode")
-        live_lbl.setStyleSheet("font-size: 13px; color: #202124;")
-        self.live_lbl = live_lbl
-        self.live_toggle = ToggleSwitch("")
-        live_row.addWidget(live_lbl)
-        live_row.addWidget(self.live_toggle)
-        bar.addLayout(live_row)
+        # Record EEG button — opens live BCI web app in browser
+        self.record_eeg_btn = QPushButton("⬤  Record EEG")
+        self.record_eeg_btn.setCursor(Qt.PointingHandCursor)
+        self.record_eeg_btn.setToolTip("Open the live EEG recording session in your browser")
+        self.record_eeg_btn.clicked.connect(self._open_live_recording)
+        self._style_record_eeg_btn(dark=False)
+        bar.addWidget(self.record_eeg_btn)
 
-        # Dark mode toggle, with label on the left of the switch
+        # Help button
+        self.help_btn = QPushButton("?  Help")
+        self.help_btn.setCursor(Qt.PointingHandCursor)
+        self.help_btn.setToolTip("How to use ErrP Visualizer")
+        self.help_btn.clicked.connect(self._open_help)
+        self._style_help_btn(dark=False)
+        bar.addWidget(self.help_btn)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        self.top_sep = sep
+        bar.addWidget(sep)
+
+        # Dark mode toggle
         dark_row = QHBoxLayout()
+        dark_row.setSpacing(6)
         dark_lbl = QLabel("Dark mode")
         dark_lbl.setStyleSheet("font-size: 13px; color: #202124;")
         self.dark_lbl = dark_lbl
@@ -639,6 +787,45 @@ class FileWindow(QMainWindow):
         bar.addLayout(dark_row)
 
         self.outer.addLayout(bar)
+
+    def _open_help(self):
+        dlg = HelpDialog(is_dark=self.is_dark_mode, parent=self)
+        dlg.exec_()
+
+    def _open_live_recording(self):
+        QDesktopServices.openUrl(QUrl(LIVE_RECORDING_URL))
+
+    def _style_help_btn(self, dark: bool):
+        if dark:
+            self.help_btn.setStyleSheet(
+                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
+                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
+                "QPushButton:hover { background: #3c4043; }"
+                "QPushButton:pressed { background: #4a4e51; }"
+            )
+        else:
+            self.help_btn.setStyleSheet(
+                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
+                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
+                "QPushButton:hover { background: #f1f3f4; }"
+                "QPushButton:pressed { background: #e8eaed; }"
+            )
+
+    def _style_record_eeg_btn(self, dark: bool):
+        if dark:
+            self.record_eeg_btn.setStyleSheet(
+                "QPushButton { background: #2d2d2d; color: #f28b82; border: 1px solid #f28b82;"
+                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
+                "QPushButton:hover { background: #3c4043; }"
+                "QPushButton:pressed { background: #4a4e51; }"
+            )
+        else:
+            self.record_eeg_btn.setStyleSheet(
+                "QPushButton { background: #ffffff; color: #c5221f; border: 1px solid #f28b82;"
+                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
+                "QPushButton:hover { background: #fce8e6; }"
+                "QPushButton:pressed { background: #fad2cf; }"
+            )
 
     def _build_tab_area(self):
         """QTabWidget that holds one FileTab per loaded file."""
@@ -678,17 +865,23 @@ class FileWindow(QMainWindow):
         df_layout.setHorizontalSpacing(14)
         df_layout.setVerticalSpacing(8)
 
-        # Download Graph button (logically attached to the file loader,
-        # but not part of the outer centering calculation)
+        # Download Graph button
+    
+        BTN_W, BTN_H = 110, 30
+
+        # Download Graph column
         download_col = QVBoxLayout()
-        download_lbl = QLabel("Download Graph")
+        download_col.setSpacing(4)
+        download_lbl = QLabel("Download")
         download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        download_lbl.setAlignment(Qt.AlignHCenter)
+        download_lbl.setFixedWidth(BTN_W)
         self.download_lbl = download_lbl
-        self.download_btn = QPushButton("…")
+        self.download_btn = QPushButton("↓ Save")
         self.download_btn.setCursor(Qt.PointingHandCursor)
-        self.download_btn.setFixedWidth(70)
-        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setFixedSize(BTN_W, BTN_H)
         self.download_btn.clicked.connect(self._download_graph)
+        download_col.addStretch(1)
         download_col.addWidget(download_lbl, alignment=Qt.AlignHCenter)
         download_col.addWidget(self.download_btn, alignment=Qt.AlignHCenter)
         download_col.addStretch(1)
@@ -701,34 +894,37 @@ class FileWindow(QMainWindow):
 
         # Browse / Clear All column
         side_col = QVBoxLayout()
+        side_col.setSpacing(4)
 
         browse_lbl = QLabel("Browse")
         browse_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        browse_lbl.setAlignment(Qt.AlignHCenter)
+        browse_lbl.setFixedWidth(BTN_W)
         self.browse_lbl = browse_lbl
         self.browse_btn = QPushButton("…")
         self.browse_btn.setCursor(Qt.PointingHandCursor)
-        self.browse_btn.setFixedWidth(70)
+        self.browse_btn.setFixedSize(BTN_W, BTN_H)
         self.browse_btn.clicked.connect(self._browse_files)
 
         clear_lbl = QLabel("Clear All")
         clear_lbl.setStyleSheet("font-size: 13px; color: #202124;")
         clear_lbl.setAlignment(Qt.AlignHCenter)
+        clear_lbl.setFixedWidth(BTN_W)
         self.clear_lbl = clear_lbl
 
         self.clear_btn = QPushButton("✕")
         self.clear_btn.setCursor(Qt.PointingHandCursor)
-        self.clear_btn.setFixedWidth(70)
+        self.clear_btn.setFixedSize(BTN_W, BTN_H)
         self.clear_btn.clicked.connect(self._clear_all_tabs)
         self._style_clear_btn(dark=False)
 
+        side_col.addStretch(1)
         side_col.addWidget(browse_lbl, alignment=Qt.AlignHCenter)
         side_col.addWidget(self.browse_btn, alignment=Qt.AlignHCenter)
-
-        side_col.addSpacing(4)   # <-- adjust pixels here
-
+        side_col.addSpacing(10)
         side_col.addWidget(clear_lbl, alignment=Qt.AlignHCenter)
         side_col.addWidget(self.clear_btn, alignment=Qt.AlignHCenter)
-        side_col.addItem(QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        side_col.addStretch(1)
 
         df_layout.addLayout(side_col, 0, 4, 1, 1)
 
@@ -934,7 +1130,6 @@ class FileWindow(QMainWindow):
 
     def _apply_window_light_styles(self):
         self.dark_mode_toggle.set_dark_mode(False)
-        self.live_toggle.set_dark_mode(False)
         self.drop_zone.set_dark_mode(False)
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
 
@@ -943,7 +1138,7 @@ class FileWindow(QMainWindow):
         )
         self._style_clear_btn(dark=False)
 
-        for lbl in [self.title_lbl, self.live_lbl, self.dark_lbl,
+        for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
             s = lbl.styleSheet()
             s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
@@ -961,7 +1156,6 @@ class FileWindow(QMainWindow):
 
     def _apply_window_dark_styles(self):
         self.dark_mode_toggle.set_dark_mode(True)
-        self.live_toggle.set_dark_mode(True)
         self.drop_zone.set_dark_mode(True)
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=True))
 
@@ -970,7 +1164,7 @@ class FileWindow(QMainWindow):
         )
         self._style_clear_btn(dark=True)
 
-        for lbl in [self.title_lbl, self.live_lbl, self.dark_lbl,
+        for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
             s = lbl.styleSheet()
             s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
