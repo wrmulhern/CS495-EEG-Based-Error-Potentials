@@ -80,7 +80,8 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, them
 
 def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
                 window_title=None, scalings=None, titles=None,
-                display_events_responses=False, show=True, theme: str = "light"):
+                display_events_responses=False, show=True, theme: str = "light",
+                selected_sensors=None):
     """
     Plot evoked response (ERP/ErrP).
     """
@@ -198,8 +199,8 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     _apply_mpl_theme(fig, ax, theme=theme)
 
     if len(picks) <= 20:
-        ax.legend(loc='best', fontsize=8)
-
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, framealpha=0.95)
+    
     if show:
         plt.tight_layout()
         plt.show()
@@ -208,13 +209,14 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
 
 
 def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
-                 cmap='RdBu_r', sensors=True, contours=6, show=True, theme: str = "light"):
+                 cmap='RdBu_r', sensors=True, contours=6, show=True, theme: str = "light",
+                 selected_sensors=None):
     """
     Plot topographic maps at specific time points.
     """
     if evoked.ch_locs is None:
         logger.warning("No channel locations available; cannot create topomap. Showing simple time-series plot instead.")
-        return plot_evoked(evoked, show=show, theme=theme)
+        return plot_evoked(evoked, show=show, theme=theme, selected_sensors=selected_sensors)
 
     if not isinstance(times, (list, np.ndarray)):
         times = [times]
@@ -258,7 +260,7 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
 
 def plot_joint(evoked, times=None, title='', ts_args=None,
                topomap_args=None, display_events_responses=False,
-               show=True, theme: str = "light"):
+               show=True, theme: str = "light", selected_sensors=None):
     """
     Plot evoked response with topomaps at specific time points.
 
@@ -289,9 +291,21 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     # ---- Time series (top row, spans all columns) ----
     ax_ts = fig.add_subplot(gs[0, :])
 
-    for ch_idx in range(len(evoked.ch_names)):
+    # Determine which channels to plot in time series
+    if selected_sensors and selected_sensors != ["All Channels"]:
+        # Plot only selected sensors
+        channels_to_plot = []
+        for sensor_name in selected_sensors:
+            if sensor_name in evoked.ch_names:
+                channels_to_plot.append(evoked.ch_names.index(sensor_name))
+    else:
+        # Plot all channels
+        channels_to_plot = list(range(len(evoked.ch_names)))
+
+    for ch_idx in channels_to_plot:
+        label = evoked.ch_names[ch_idx] if len(channels_to_plot) <= 20 else None
         ax_ts.plot(evoked.times * 1000, evoked.data[ch_idx, :] * 1e6,
-                  alpha=0.5, linewidth=0.8)
+                  alpha=0.5, linewidth=0.8, label=label)
 
     # Mark only in-range topo times with a red dashed line
     time_min_ms = evoked.times[0] * 1000
@@ -420,6 +434,10 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
             ax_topo.set_xlabel('uV')
             ax_topo.set_title(f'{actual_time * 1000:.0f} ms')
             ax_topo.axvline(0, color='k', linestyle='-', linewidth=0.5)
+
+    # Add legend to time series plot if not too many channels
+    if len(channels_to_plot) <= 20:
+        ax_ts.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, framealpha=0.95)
 
     _apply_mpl_theme(fig, fig.get_axes(), theme=theme)
 

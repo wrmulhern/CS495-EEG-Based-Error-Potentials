@@ -7,7 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices
 from PyQt5.QtWidgets import (
     QApplication,
@@ -22,6 +22,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -46,6 +48,208 @@ from .themes.dark_theme import apply_dark_theme
 logger = logging.getLogger(__name__)
 
 LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
+
+#
+#
+# MULTI-SELECT DROPDOWN WIDGET
+#
+#
+class MultiSelectItemDelegate:
+    """Helper to style selected items with grey background."""
+    @staticmethod
+    def update_item_style(item: QListWidgetItem, is_selected: bool):
+        """Update item style based on selection state."""
+        if is_selected:
+            item.setBackground(Qt.lightGray)
+        else:
+            item.setBackground(Qt.white)
+
+
+class MultiSelectDropdown(QWidget):
+    """
+    A custom multi-select dropdown widget with checkboxes.
+    Supports "Select All" / "Deselect All" functionality.
+    Stays open until clicking outside or pressing Enter.
+    """
+    selectionChanged = pyqtSignal(list)  # Emits list of selected items
+    confirmed = pyqtSignal()  # Emits when Enter is pressed
+
+    def __init__(self, items: List[str], parent=None):
+        super().__init__(parent)
+        self.items = items
+        self.selected = set()
+        self.is_open = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Button to show/hide dropdown
+        self.button = QPushButton("All Channels")
+        self.button.setStyleSheet("text-align: left; padding-left: 8px;")
+        self.button.clicked.connect(self.toggle_dropdown)
+        layout.addWidget(self.button)
+
+        # Dropdown frame (initially hidden)
+        self.dropdown_frame = QFrame()
+        self.dropdown_frame.setFrameShape(QFrame.StyledPanel)
+        self.dropdown_frame.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        
+        dropdown_layout = QVBoxLayout(self.dropdown_frame)
+        dropdown_layout.setContentsMargins(0, 0, 0, 0)
+        dropdown_layout.setSpacing(0)
+
+        # List widget with items
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(250)
+        self.list_widget.setSelectionMode(QListWidget.NoSelection)  # Disable blue highlight
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        
+        # Store the original keyPressEvent method and override it
+        self._original_list_keypress = self.list_widget.keyPressEvent
+        self.list_widget.keyPressEvent = self._on_list_key_press
+
+        for i, item_text in enumerate(items):
+            item = QListWidgetItem(item_text)
+            self.list_widget.addItem(item)
+
+        dropdown_layout.addWidget(self.list_widget)
+        self.dropdown_frame.setLayout(dropdown_layout)
+        self.dropdown_frame.hide()
+        
+        # Install event filter to detect when dropdown loses focus
+        self.dropdown_frame.installEventFilter(self)
+
+    def toggle_dropdown(self):
+        if self.dropdown_frame.isVisible():
+            self.close_dropdown()
+        else:
+            self.open_dropdown()
+
+    def open_dropdown(self):
+        """Show the dropdown below the button."""
+        # Position below button
+        pos = self.button.mapToGlobal(self.button.rect().bottomLeft())
+        self.dropdown_frame.move(pos)
+        self.dropdown_frame.resize(self.button.width(), 250)
+        self.dropdown_frame.show()
+        self.list_widget.setFocus()
+        self.is_open = True  # Set flag after showing
+
+    def close_dropdown(self):
+        """Hide the dropdown and confirm the selection."""
+        self.dropdown_frame.hide()
+        self.is_open = False  # Set flag after hiding
+        self.confirmed.emit()
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        """Handle item click to toggle selection."""
+        idx = self.list_widget.row(item)
+        item_text = self.items[idx]
+
+        # Special handling for "All Channels"
+        if item_text == "All Channels":
+            # If "All Channels" is currently selected
+            if item_text in self.selected:
+                # Deselect all items
+                self.selected.clear()
+                for i in range(self.list_widget.count()):
+                    list_item = self.list_widget.item(i)
+                    MultiSelectItemDelegate.update_item_style(list_item, False)
+            else:
+                # Select all items
+                self.selected = set(self.items)
+                for i in range(self.list_widget.count()):
+                    list_item = self.list_widget.item(i)
+                    MultiSelectItemDelegate.update_item_style(list_item, True)
+        else:
+            # Regular item clicked - toggle selection
+            is_currently_selected = item_text in self.selected
+            
+            if is_currently_selected:
+                self.selected.discard(item_text)
+            else:
+                self.selected.add(item_text)
+            
+            # Update styling for this item
+            MultiSelectItemDelegate.update_item_style(item, not is_currently_selected)
+
+            # Check if all items (excluding "All Channels") are selected
+            all_items = set(self.items[1:])  # Skip "All Channels"
+            individual_selected = self.selected.copy()
+            individual_selected.discard("All Channels")
+
+            all_checkbox = self.list_widget.item(0)
+            if individual_selected == all_items:
+                self.selected.add("All Channels")
+                MultiSelectItemDelegate.update_item_style(all_checkbox, True)
+            else:
+                self.selected.discard("All Channels")
+                MultiSelectItemDelegate.update_item_style(all_checkbox, False)
+
+        self.selectionChanged.emit(list(self.selected))
+        self._update_button_text()
+
+    def _on_list_key_press(self, event):
+        """Handle key press in list widget."""
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            self.close_dropdown()
+        elif event.key() == Qt.Key_Escape:
+            self.close_dropdown()
+        else:
+            self._original_list_keypress(event)
+
+    def eventFilter(self, obj, event):
+        """Handle events on the dropdown frame to close when it loses focus."""
+        if obj == self.dropdown_frame:
+            if event.type() == 3:  # QEvent.FocusOut
+                if self.dropdown_frame.isVisible():
+                    self.close_dropdown()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _update_button_text(self):
+        """Update button text to show current selection."""
+        if not self.selected:
+            text = "No Selection"
+        elif "All Channels" in self.selected and len(self.selected) == len(self.items):
+            text = "All Channels"
+        else:
+            # Show count or abbreviated list
+            if len(self.selected) == 1:
+                text = list(self.selected)[0]
+            else:
+                text = f"{len(self.selected)} selected"
+        self.button.setText(text)
+
+    def get_selected(self) -> List[str]:
+        """Return list of selected items."""
+        return list(self.selected)
+
+    def set_items(self, items: List[str]):
+        """Update the list of items."""
+        self.items = items
+        self.list_widget.clear()
+        self.selected.clear()
+
+        for item_text in items:
+            item = QListWidgetItem(item_text)
+            self.list_widget.addItem(item)
+
+        self._update_button_text()
+
+    def keyPressEvent(self, event):
+        """Handle Escape key to close dropdown."""
+        if event.key() == Qt.Key_Escape and self.dropdown_frame.isVisible():
+            self.close_dropdown()
+        else:
+            super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        """Close dropdown when parent widget loses focus."""
+        if self.dropdown_frame.isVisible():
+            self.close_dropdown()
+        super().focusOutEvent(event)
 
 #
 #
@@ -198,7 +402,7 @@ class FileTab(QWidget):
         # Per tab EEG state, loaded once visualized clicked (lazy loading)
         self.current_epochs = None
         self._all_sensors: List[str] = ["All Channels"]
-        self._last_time_series_selection: str = "All Channels"
+        self._last_time_series_selection: List[str] = ["All Channels"]
         self._last_graph_type: str = "ErrP Time Series"
         self.events_checkbox_checked: bool = False
 
@@ -243,6 +447,11 @@ class FileTab(QWidget):
         layout.setSpacing(14)
 
         # Epoch inputs
+        self.epoch_container = QWidget()
+        epoch_layout = QVBoxLayout(self.epoch_container)
+        epoch_layout.setContentsMargins(0, 0, 0, 0)
+        epoch_layout.setSpacing(6)
+        
         self.epoch_label = QLabel("Epoch (in ms)")
         self.epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
 
@@ -267,18 +476,23 @@ class FileTab(QWidget):
         epoch_row.addWidget(self.epoch_end)
         epoch_row.addStretch(1)
 
-        layout.addWidget(self.epoch_label)
-        layout.addLayout(epoch_row)
+        epoch_layout.addWidget(self.epoch_label)
+        epoch_layout.addLayout(epoch_row)
+        layout.addWidget(self.epoch_container)
 
         # Sensor dropdown
-        sensor_label = QLabel("Sensor")
+        self.sensor_container = QWidget()
+        sensor_layout = QVBoxLayout(self.sensor_container)
+        sensor_layout.setContentsMargins(0, 0, 0, 0)
+        sensor_layout.setSpacing(6)
+        sensor_label = QLabel("Sensor(s)")
         sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
-        self.sensor_combo = QComboBox()
-        self.sensor_combo.addItems(["All Channels"])
+        self.sensor_combo = MultiSelectDropdown(["All Channels"])
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.sensor_combo.currentTextChanged.connect(self.mark_needs_update)
-        layout.addWidget(sensor_label)
-        layout.addWidget(self.sensor_combo)
+        self.sensor_combo.confirmed.connect(self.mark_needs_update)
+        sensor_layout.addWidget(sensor_label)
+        sensor_layout.addWidget(self.sensor_combo)
+        layout.addWidget(self.sensor_container)
 
         # Graph type dropdown
         graph_type_label = QLabel("Graph Type")
@@ -361,11 +575,7 @@ class FileTab(QWidget):
             logger.debug(f"[Tab] Loading {self.filepath} ...")
             self.current_epochs = read_epochs_eeglab_minimal(self.filepath, verbose=False)
             self._all_sensors = ["All Channels"] + list(self.current_epochs.ch_names)
-            self.sensor_combo.blockSignals(True)
-            self.sensor_combo.clear()
-            self.sensor_combo.addItems(self._all_sensors)
-            self.sensor_combo.setCurrentText("All Channels")
-            self.sensor_combo.blockSignals(False)
+            self.sensor_combo.set_items(self._all_sensors)
             logger.debug(f"[Tab] Loaded {len(self.current_epochs.ch_names)} channels")
             return True
         except Exception as e:
@@ -397,7 +607,7 @@ class FileTab(QWidget):
         opts = {
             "epoch_start": self.epoch_start.text().strip(),
             "epoch_end":   self.epoch_end.text().strip(),
-            "sensor":      self.sensor_combo.currentText(),
+            "sensors":     self.sensor_combo.get_selected(),
             "graph_type":  graph_type,
             "display_events_responses": self.events_checkbox.isChecked(),
         }
@@ -421,11 +631,19 @@ class FileTab(QWidget):
 
             # Channel picks (topo/joint always need all channels)
             channel_picks = None
-            sensor_name = opts["sensor"]
+            selected_sensors = opts["sensors"]
             needs_all = graph_type in ("Topographic Map", "Joint Maps")
-            if not needs_all and sensor_name != "All Channels" and sensor_name in epochs.ch_names:
-                channel_picks = [epochs.ch_names.index(sensor_name)]
-                logger.debug(f"[Tab] Channel: {sensor_name}")
+            
+            if not needs_all and selected_sensors and selected_sensors != ["All Channels"]:
+                # Build picks from selected sensors
+                channel_picks = []
+                for sensor_name in selected_sensors:
+                    if sensor_name in epochs.ch_names:
+                        channel_picks.append(epochs.ch_names.index(sensor_name))
+                if channel_picks:
+                    logger.debug(f"[Tab] Channels: {len(channel_picks)} selected")
+                else:
+                    channel_picks = None
 
             logger.debug("[Tab] Averaging epochs...")
             evoked = average_epochs(epochs, picks=channel_picks)
@@ -438,11 +656,13 @@ class FileTab(QWidget):
                     window_title="ErrP Time Series",
                     display_events_responses=opts["display_events_responses"],
                     show=False, theme=theme,
+                    selected_sensors=selected_sensors,
                 )
             elif graph_type == "Topographic Map":
                 fig = plot_topomap(
                     evoked, times=self._parse_topomap_times(),
                     show=False, theme=theme,
+                    selected_sensors=selected_sensors,
                 )
             elif graph_type == "Joint Maps":
                 fig = plot_joint(
@@ -451,9 +671,10 @@ class FileTab(QWidget):
                     title="ErrP Analysis",
                     display_events_responses=opts["display_events_responses"],
                     show=False, theme=theme,
+                    selected_sensors=selected_sensors,
                 )
             else:
-                fig = plot_evoked(evoked, show=False, theme=theme)
+                fig = plot_evoked(evoked, show=False, theme=theme, selected_sensors=selected_sensors)
 
             self._replace_canvas(fig)
 
@@ -491,14 +712,19 @@ class FileTab(QWidget):
         supports_topo = graph_type in ("Topographic Map", "Joint Maps")
         self.topo_times_container.setVisible(supports_topo)
 
+        # Sensor dropdown for Time Series and Joint Maps
+        show_sensor_selection = graph_type in ("ErrP Time Series", "Joint Maps")
+        self.sensor_container.setVisible(show_sensor_selection)
+
+        # Epoch window only for Time Series
+        is_topo_only = graph_type == "Topographic Map"
+        self.epoch_container.setVisible(not is_topo_only)
+
         if supports_events:
             self.events_checkbox.blockSignals(True)
             self.events_checkbox.setChecked(self.events_checkbox_checked)
             self.events_checkbox.blockSignals(False)
 
-        is_topo_only = graph_type == "Topographic Map"
-        self.epoch_start.setEnabled(not is_topo_only)
-        self.epoch_end.setEnabled(not is_topo_only)
         if is_topo_only:
             self.epoch_start.blockSignals(True)
             self.epoch_end.blockSignals(True)
@@ -515,23 +741,47 @@ class FileTab(QWidget):
             self._set_epoch_field_style(disabled=False)
 
         # switch to all channels if needed
-        if graph_type in ("Topographic Map", "Joint Maps"):
+        if graph_type == "Topographic Map":
+            # Topomap only shows "All Channels" option
             if self._last_graph_type == "ErrP Time Series":
-                self._last_time_series_selection = self.sensor_combo.currentText()
-            self.sensor_combo.blockSignals(True)
-            self.sensor_combo.clear()
-            self.sensor_combo.addItem("All Channels")
-            self.sensor_combo.setCurrentIndex(0)
-            self.sensor_combo.blockSignals(False)
-        else:
-            self.sensor_combo.blockSignals(True)
-            self.sensor_combo.clear()
-            self.sensor_combo.addItems(self._all_sensors if self._all_sensors else ["All Channels"])
-            if self._last_time_series_selection in self._all_sensors:
-                self.sensor_combo.setCurrentText(self._last_time_series_selection)
+                self._last_time_series_selection = self.sensor_combo.get_selected()
+            self.sensor_combo.set_items(["All Channels"])
+        elif graph_type == "Joint Maps":
+            # Joint Maps shows all sensors for time series control
+            if self._last_graph_type == "ErrP Time Series":
+                self._last_time_series_selection = self.sensor_combo.get_selected()
+            self.sensor_combo.set_items(self._all_sensors if self._all_sensors else ["All Channels"])
+            if self._last_time_series_selection and any(s in self._all_sensors for s in self._last_time_series_selection):
+                # Restore previous selections for Joint Maps
+                for sensor in self._last_time_series_selection:
+                    if sensor in self._all_sensors:
+                        item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
+                        MultiSelectItemDelegate.update_item_style(item, True)
+                self.sensor_combo.selected = set(self._last_time_series_selection)
+                self.sensor_combo._update_button_text()
             else:
-                self.sensor_combo.setCurrentIndex(0)
-            self.sensor_combo.blockSignals(False)
+                # Default to "All Channels"
+                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
+                MultiSelectItemDelegate.update_item_style(item, True)
+                self.sensor_combo.selected = {"All Channels"}
+                self.sensor_combo._update_button_text()
+        else:
+            # Time Series mode
+            self.sensor_combo.set_items(self._all_sensors if self._all_sensors else ["All Channels"])
+            if self._last_time_series_selection and any(s in self._all_sensors for s in self._last_time_series_selection):
+                # Restore previous selections for Time Series
+                for sensor in self._last_time_series_selection:
+                    if sensor in self._all_sensors:
+                        item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
+                        MultiSelectItemDelegate.update_item_style(item, True)
+                self.sensor_combo.selected = set(self._last_time_series_selection)
+                self.sensor_combo._update_button_text()
+            else:
+                # Default to "All Channels"
+                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
+                MultiSelectItemDelegate.update_item_style(item, True)
+                self.sensor_combo.selected = {"All Channels"}
+                self.sensor_combo._update_button_text()
 
         self._last_graph_type = graph_type
 
