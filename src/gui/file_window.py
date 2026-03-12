@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QMessageBox,
     QShortcut,
+    QProgressDialog,
 )
 
 from src.data_processing.data_loader import read_epochs_eeglab_minimal
@@ -571,6 +572,19 @@ class FileTab(QWidget):
         """
         if self.current_epochs is not None:
             return True
+        # Show a simple modal loading indicator so the user
+        # gets feedback while large files are being read.
+        app = QApplication.instance()
+        progress = QProgressDialog("Loading EEG data…", "", 0, 0, self)
+        progress.setWindowTitle("Loading")
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(True)
+        progress.show()
+        if app is not None:
+            app.setOverrideCursor(Qt.WaitCursor)
+            app.processEvents()
         try:
             logger.debug(f"[Tab] Loading {self.filepath} ...")
             self.current_epochs = read_epochs_eeglab_minimal(self.filepath, verbose=False)
@@ -580,10 +594,15 @@ class FileTab(QWidget):
             return True
         except Exception as e:
             QMessageBox.critical(
-                self, "Load Error",
-                f"Could not load file:\n{os.path.basename(self.filepath)}\n\n{e}"
+                self,
+                "Load Error",
+                f"Could not load file:\n{os.path.basename(self.filepath)}\n\n{e}",
             )
             return False
+        finally:
+            progress.close()
+            if app is not None:
+                app.restoreOverrideCursor()
 
     # Visualize
     def visualize(self):
