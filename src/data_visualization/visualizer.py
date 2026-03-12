@@ -560,3 +560,73 @@ def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
     ax.set_aspect('equal')
     ax.axis('off')
     ax.set_title(title)
+
+
+def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
+                       sensors=True, contours=6, theme='light',
+                       global_vmax=None):
+    """
+    Render a single topomap at *time* onto *fig*.
+
+    If *fig* is None a new figure is created; otherwise all axes are cleared
+    and redrawn.  *global_vmax* keeps the colour scale fixed across frames
+    (pass ``np.abs(evoked.data).max() * 1e6`` computed once up-front).
+    """
+    if evoked.ch_locs is None:
+        logger.warning("No channel locations; cannot render animated topomap.")
+        return fig
+
+    pos = _get_channel_positions(evoked.ch_locs, evoked.ch_names)
+
+    time_idx = np.argmin(np.abs(evoked.times - time))
+    actual_time = evoked.times[time_idx]
+    data = evoked.data[:, time_idx] * 1e6
+
+    if fig is None:
+        fig = plt.figure(figsize=(6, 5))
+    else:
+        fig.clear()
+
+    ax = fig.add_subplot(111)
+
+    vmax = global_vmax if global_vmax is not None else np.abs(data).max()
+
+    xi = np.linspace(pos[:, 0].min() - 0.1, pos[:, 0].max() + 0.1, 100)
+    yi = np.linspace(pos[:, 1].min() - 0.1, pos[:, 1].max() + 0.1, 100)
+    Xi, Yi = np.meshgrid(xi, yi)
+    Zi = griddata(pos, data, (Xi, Yi), method='cubic')
+
+    ax.contourf(Xi, Yi, Zi, levels=contours, cmap=cmap,
+                vmin=-vmax, vmax=vmax)
+
+    circle = patches.Circle((0, 0), 1.0, fill=False,
+                            edgecolor='k', linewidth=2)
+    ax.add_patch(circle)
+    nose = patches.Wedge((0, 1.0), 0.2, 60, 120,
+                         facecolor='k', edgecolor='k')
+    ax.add_patch(nose)
+
+    if sensors:
+        ax.plot(pos[:, 0], pos[:, 1], 'ko', markersize=4)
+
+    ax.set_xlim([xi.min(), xi.max()])
+    ax.set_ylim([yi.min(), yi.max()])
+    ax.set_aspect('equal')
+    ax.set_anchor('C')
+    ax.axis('off')
+    ax.set_title(f'{actual_time * 1000:.1f} ms', fontsize=14)
+
+    fig.suptitle('Topographic Map', fontsize=14, y=0.97)
+
+    norm = plt.Normalize(vmin=-vmax, vmax=vmax)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation='vertical',
+                        fraction=0.046, pad=0.04)
+    cbar.set_label('Amplitude (µV)')
+
+    _apply_mpl_theme(fig, [ax, cbar.ax], theme=theme)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+    return fig

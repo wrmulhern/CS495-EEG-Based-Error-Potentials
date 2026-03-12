@@ -7,7 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt, QUrl, pyqtSignal
+from PyQt5.QtCore import Qt, QUrl, QTimer, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices
 from PyQt5.QtWidgets import (
     QApplication,
@@ -35,12 +35,13 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QMessageBox,
     QShortcut,
+    QSlider,
     QProgressDialog,
 )
 
 from src.data_processing.data_loader import read_epochs_eeglab_minimal
 from src.data_processing.data_processor import average_epochs, select_time_window
-from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint
+from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint, plot_topomap_frame
 from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
 from .themes.light_theme import apply_light_theme
@@ -407,6 +408,14 @@ class FileTab(QWidget):
         self._last_graph_type: str = "ErrP Time Series"
         self.events_checkbox_checked: bool = False
 
+        # Animation state (for animated topomap mode)
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_playing = False
+        self._anim_evoked = None
+        self._anim_theme = "light"
+        self._anim_global_vmax = None
+
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(18)
@@ -535,6 +544,65 @@ class FileTab(QWidget):
         topo_layout.addLayout(topo_row)
         layout.addWidget(self.topo_times_container)
         self.topo_times_container.setVisible(False)
+
+        # Topomap mode selector (Static / Animated) — visible for Topographic Map only
+        self.topo_mode_container = QWidget()
+        topo_mode_layout = QVBoxLayout(self.topo_mode_container)
+        topo_mode_layout.setContentsMargins(0, 0, 0, 0)
+        topo_mode_layout.setSpacing(6)
+        self.topo_mode_label = QLabel("Topomap Mode")
+        self.topo_mode_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.topo_mode_combo = QComboBox()
+        self.topo_mode_combo.addItems(["Static", "Animated"])
+        self.topo_mode_combo.currentTextChanged.connect(self._on_topo_mode_changed)
+        self.topo_mode_combo.currentTextChanged.connect(self.mark_needs_update)
+        topo_mode_layout.addWidget(self.topo_mode_label)
+        topo_mode_layout.addWidget(self.topo_mode_combo)
+        layout.addWidget(self.topo_mode_container)
+        self.topo_mode_container.setVisible(False)
+
+        # Animation controls — visible when Topomap Mode is Animated
+        self.anim_controls_container = QWidget()
+        anim_layout = QVBoxLayout(self.anim_controls_container)
+        anim_layout.setContentsMargins(0, 0, 0, 0)
+        anim_layout.setSpacing(8)
+
+        anim_btn_row = QHBoxLayout()
+        anim_btn_row.setSpacing(8)
+        self.anim_play_btn = QPushButton("▶  Play")
+        self.anim_play_btn.setCursor(Qt.PointingHandCursor)
+        self.anim_play_btn.setFixedHeight(30)
+        self.anim_play_btn.clicked.connect(self._toggle_animation)
+        anim_btn_row.addWidget(self.anim_play_btn)
+
+        anim_speed_label = QLabel("Speed:")
+        anim_speed_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.anim_speed_combo = QComboBox()
+        self.anim_speed_combo.addItems(["0.5x", "1x", "2x", "4x"])
+        self.anim_speed_combo.setCurrentIndex(1)
+        self.anim_speed_combo.setFixedWidth(60)
+        anim_btn_row.addWidget(anim_speed_label)
+        anim_btn_row.addWidget(self.anim_speed_combo)
+        anim_btn_row.addStretch(1)
+        anim_layout.addLayout(anim_btn_row)
+
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(8)
+        self.anim_slider = QSlider(Qt.Horizontal)
+        self.anim_slider.setRange(0, 100)
+        self.anim_slider.setValue(0)
+        self.anim_slider.valueChanged.connect(self._on_anim_slider_changed)
+        slider_row.addWidget(self.anim_slider, stretch=1)
+
+        self.anim_time_label = QLabel("0.0 ms")
+        self.anim_time_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.anim_time_label.setFixedWidth(80)
+        self.anim_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider_row.addWidget(self.anim_time_label)
+        anim_layout.addLayout(slider_row)
+
+        layout.addWidget(self.anim_controls_container)
+        self.anim_controls_container.setVisible(False)
 
         # Events checkbox
         self.events_checkbox_container = QWidget()
@@ -669,6 +737,13 @@ class FileTab(QWidget):
 
             theme = "dark" if self._is_dark_mode else "light"
 
+            # Animated topomap — set up the figure and slider, then return
+            if (graph_type == "Topographic Map"
+                    and self.topo_mode_combo.currentText() == "Animated"):
+                self._setup_animated_topomap(evoked, theme)
+                self.reset_visualize_button()
+                return
+
             if graph_type == "ErrP Time Series":
                 fig = plot_evoked(
                     evoked,
@@ -729,14 +804,27 @@ class FileTab(QWidget):
         self.events_checkbox_container.setVisible(supports_events)
 
         supports_topo = graph_type in ("Topographic Map", "Joint Maps")
-        self.topo_times_container.setVisible(supports_topo)
+        is_topo_only = graph_type == "Topographic Map"
+
+        # Topomap mode selector only for Topographic Map (not Joint Maps)
+        self.topo_mode_container.setVisible(is_topo_only)
+
+        if is_topo_only:
+            is_animated = self.topo_mode_combo.currentText() == "Animated"
+            self.topo_times_container.setVisible(not is_animated)
+            self.anim_controls_container.setVisible(is_animated)
+            if not is_animated:
+                self._stop_animation()
+        else:
+            self._stop_animation()
+            self.anim_controls_container.setVisible(False)
+            self.topo_times_container.setVisible(supports_topo)
 
         # Sensor dropdown for Time Series and Joint Maps
         show_sensor_selection = graph_type in ("ErrP Time Series", "Joint Maps")
         self.sensor_container.setVisible(show_sensor_selection)
 
         # Epoch window only for Time Series
-        is_topo_only = graph_type == "Topographic Map"
         self.epoch_container.setVisible(not is_topo_only)
 
         if supports_events:
@@ -825,6 +913,93 @@ class FileTab(QWidget):
 
     def _on_events_checkbox_changed(self, _state):
         self.events_checkbox_checked = self.events_checkbox.isChecked()
+
+    # ---- Animated topomap helpers ----
+
+    def _on_topo_mode_changed(self, mode: str):
+        is_animated = mode == "Animated"
+        self.topo_times_container.setVisible(not is_animated)
+        self.anim_controls_container.setVisible(is_animated)
+        if not is_animated:
+            self._stop_animation()
+        self.mark_needs_update()
+
+    def _setup_animated_topomap(self, evoked, theme):
+        self._stop_animation()
+        self._anim_evoked = evoked
+        self._anim_theme = theme
+        self._anim_global_vmax = float(np.abs(evoked.data).max() * 1e6)
+
+        fig = plot_topomap_frame(
+            evoked, time=evoked.times[0],
+            theme=theme, global_vmax=self._anim_global_vmax,
+        )
+        self._replace_canvas(fig)
+
+        n_times = len(evoked.times)
+        self.anim_slider.blockSignals(True)
+        self.anim_slider.setRange(0, n_times - 1)
+        self.anim_slider.setValue(0)
+        self.anim_slider.blockSignals(False)
+        self._update_anim_time_label(0)
+
+    def _on_anim_slider_changed(self, value):
+        if self._anim_evoked is None:
+            return
+        time = self._anim_evoked.times[value]
+        self._update_anim_time_label(value)
+        plot_topomap_frame(
+            self._anim_evoked, time=time,
+            fig=self.figure, theme=self._anim_theme,
+            global_vmax=self._anim_global_vmax,
+        )
+        self.canvas.draw_idle()
+
+    def _update_anim_time_label(self, slider_value):
+        if self._anim_evoked is not None and slider_value < len(self._anim_evoked.times):
+            time_ms = self._anim_evoked.times[slider_value] * 1000
+            self.anim_time_label.setText(f"{time_ms:.1f} ms")
+
+    def _toggle_animation(self):
+        if self._anim_evoked is None:
+            return
+        if self._anim_playing:
+            self._pause_animation()
+        else:
+            self._start_animation()
+
+    def _start_animation(self):
+        if self._anim_evoked is None:
+            return
+        self._anim_playing = True
+        self.anim_play_btn.setText("⏸  Pause")
+        self._anim_timer.start(50)
+
+    def _pause_animation(self):
+        self._anim_playing = False
+        self.anim_play_btn.setText("▶  Play")
+        self._anim_timer.stop()
+
+    def _stop_animation(self):
+        self._pause_animation()
+        self._anim_evoked = None
+
+    def _on_anim_tick(self):
+        if self._anim_evoked is None:
+            self._pause_animation()
+            return
+
+        speed_text = self.anim_speed_combo.currentText()
+        speed = float(speed_text.replace("x", ""))
+
+        sfreq = self._anim_evoked.sfreq
+        step = max(1, round(sfreq * 0.025 * speed))
+
+        current = self.anim_slider.value()
+        new_val = current + step
+        if new_val > self.anim_slider.maximum():
+            new_val = 0
+        self.anim_slider.setValue(new_val)
 
     # time parser for topo maps
     def _parse_topomap_times(self) -> List[float]:
@@ -948,12 +1123,46 @@ class FileTab(QWidget):
                 "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #1a73e8; background: #1a73e8; }"
             )
 
+        # Animation play button + slider
+        if is_dark:
+            self.anim_play_btn.setStyleSheet(
+                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
+                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
+                "QPushButton:hover { background: #3c4043; }"
+                "QPushButton:pressed { background: #4a4e51; }"
+            )
+            self.anim_slider.setStyleSheet(
+                "QSlider::groove:horizontal { background: #3c4043; height: 6px; border-radius: 3px; }"
+                "QSlider::handle:horizontal { background: #8ab4f8; width: 14px; margin: -4px 0;"
+                " border-radius: 7px; }"
+                "QSlider::sub-page:horizontal { background: #8ab4f8; border-radius: 3px; }"
+            )
+        else:
+            self.anim_play_btn.setStyleSheet(
+                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
+                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
+                "QPushButton:hover { background: #f1f3f4; }"
+                "QPushButton:pressed { background: #e8eaed; }"
+            )
+            self.anim_slider.setStyleSheet(
+                "QSlider::groove:horizontal { background: #dadce0; height: 6px; border-radius: 3px; }"
+                "QSlider::handle:horizontal { background: #1a73e8; width: 14px; margin: -4px 0;"
+                " border-radius: 7px; }"
+                "QSlider::sub-page:horizontal { background: #1a73e8; border-radius: 3px; }"
+            )
+
+        # Keep animation theme in sync so slider redraws use the right colours
+        self._anim_theme = "dark" if is_dark else "light"
+
         # Re-apply epoch field disabled style if currently on Topographic Map
         self._on_graph_type_changed(self.graph_type_combo.currentText())
 
         # Retheme the live matplotlib figure
-        self._apply_mpl_theme(self.figure)
-        self.canvas.draw_idle()
+        if self._anim_evoked is not None:
+            self._on_anim_slider_changed(self.anim_slider.value())
+        else:
+            self._apply_mpl_theme(self.figure)
+            self.canvas.draw_idle()
 
         # Update button appearance
         self.reset_visualize_button()
