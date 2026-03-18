@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
+from .file_validator import FileValidator, FileValidationError
+
 logger = logging.getLogger(__name__)
 
 class Bunch(dict):
@@ -112,11 +114,25 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
 
     Returns:
         EpochsData object
+        
+    Raises:
+        FileValidationError: If file validation fails
     """
     set_file = Path(set_file)
 
     if verbose:
         logger.debug(f"Loading file: {set_file}")
+
+    # Validate file before loading
+    try:
+        file_type, validation_info = FileValidator.validate_file(str(set_file))
+        if file_type != 'set':
+            raise FileValidationError(f"Expected .set file, got .{file_type}")
+        if verbose:
+            logger.debug(f"File validation passed. Size: {validation_info['file_size_bytes']} bytes")
+    except FileValidationError as e:
+        logger.error(f"File validation failed: {e}")
+        raise
 
     # Load MATLAB file
     mat = loadmat(set_file, squeeze_me=True, struct_as_record=False)
@@ -296,3 +312,91 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     )
 
     return epochs
+
+
+def read_csv_data(csv_file, verbose=True):
+    """
+    Read EEG data from CSV file with validation.
+
+    Parameters:
+        csv_file: path to .csv file
+        verbose: print debugging information
+
+    Returns:
+        Tuple of (data, ch_names, metadata_dict)
+        
+    Raises:
+        FileValidationError: If file validation fails
+    """
+    import csv
+    
+    csv_file = Path(csv_file)
+
+    if verbose:
+        logger.debug(f"Loading CSV file: {csv_file}")
+
+    # Validate file before loading
+    try:
+        file_type, validation_info = FileValidator.validate_file(str(csv_file))
+        if file_type != 'csv':
+            raise FileValidationError(f"Expected .csv file, got .{file_type}")
+        if verbose:
+            logger.debug(f"File validation passed. Size: {validation_info['file_size_bytes']} bytes")
+            logger.debug(f"CSV info - Rows: {validation_info['csv_rows']}, "
+                        f"Headers: {validation_info['csv_headers']}")
+    except FileValidationError as e:
+        logger.error(f"File validation failed: {e}")
+        raise
+
+    # Load CSV data
+    try:
+        data_rows = []
+        ch_names = None
+        
+        with open(csv_file, 'r', encoding='utf-8', errors='replace') as f:
+            reader = csv.reader(f)
+            
+            # Read headers
+            ch_names = next(reader)
+            
+            # Read data rows
+            for row in reader:
+                # Skip empty rows
+                if not row or all(cell.strip() == '' for cell in row):
+                    continue
+                
+                try:
+                    # Convert to float
+                    row_data = [float(cell.strip()) for cell in row]
+                    data_rows.append(row_data)
+                except ValueError as e:
+                    logger.warning(f"Skipping row with non-numeric data: {row}")
+                    continue
+        
+        if not data_rows:
+            raise FileValidationError("CSV file contains no valid numeric data rows")
+        
+        # Convert to numpy array
+        data = np.array(data_rows, dtype=np.float32)
+        
+        if verbose:
+            logger.debug(f"Loaded CSV data with shape: {data.shape}")
+            logger.debug(f"Channels: {ch_names}")
+            logger.debug(f"Data range: [{data.min():.3f}, {data.max():.3f}]")
+        
+        # Create metadata
+        metadata = {
+            'file_path': str(csv_file),
+            'n_channels': len(ch_names),
+            'n_samples': len(data_rows),
+            'data_min': float(data.min()),
+            'data_max': float(data.max()),
+            'data_mean': float(data.mean()),
+        }
+        
+        return data, ch_names, metadata
+    
+    except Exception as e:
+        logger.error(f"Error reading CSV file: {e}")
+        raise FileValidationError(f"Error reading CSV file: {e}")
+

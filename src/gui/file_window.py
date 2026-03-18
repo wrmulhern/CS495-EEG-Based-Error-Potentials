@@ -39,7 +39,8 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
 )
 
-from src.data_processing.data_loader import read_epochs_eeglab_minimal
+from src.data_processing.data_loader import read_epochs_eeglab_minimal, read_csv_data
+from src.data_processing.file_validator import FileValidator, FileValidationError
 from src.data_processing.data_processor import average_epochs, select_time_window
 from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint, plot_topomap_frame
 from .utils.drag_and_drop import FileDropFrame
@@ -1458,11 +1459,22 @@ class FileWindow(QMainWindow):
     def add_files(self, paths: List[str]):
         """
         Add one tab per new file, loading is lazy.
-        Automatically converts .csv files to .set format.
+        Validates files before loading, then automatically converts .csv files to .set format.
         """
         added = []
         for p in paths:
             ap = os.path.abspath(p)
+            
+            # Validate file first
+            try:
+                file_type, validation_info = FileValidator.validate_file(ap)
+                logger.debug(f"File validation passed for: {os.path.basename(ap)}")
+            except FileValidationError as e:
+                QMessageBox.critical(
+                    self, "File Validation Error",
+                    f"Invalid file:\n{os.path.basename(p)}\n\n{str(e)}"
+                )
+                continue  # Skip this file
         
             # AUTO-CONVERT CSV TO .SET
             if ap.lower().endswith('.csv'):
