@@ -101,7 +101,7 @@ class EpochsData:
         }
 
 
-def read_epochs_eeglab_minimal(set_file, verbose=True):
+def read_epochs_eeglab_minimal(set_file):
     """
     Read EEGLAB .set file containing epoched data.
 
@@ -114,22 +114,20 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
 
     Returns:
         EpochsData object
-        
+
     Raises:
         FileValidationError: If file validation fails
     """
     set_file = Path(set_file)
 
-    if verbose:
-        logger.debug(f"Loading file: {set_file}")
+    logger.debug(f"Loading file: {set_file}")
 
     # Validate file before loading
     try:
         file_type, validation_info = FileValidator.validate_file(str(set_file))
         if file_type != 'set':
             raise FileValidationError(f"Expected .set file, got .{file_type}")
-        if verbose:
-            logger.debug(f"File validation passed. Size: {validation_info['file_size_bytes']} bytes")
+        logger.debug(f"File validation passed. Size: {validation_info['file_size_bytes']} bytes")
     except FileValidationError as e:
         logger.error(f"File validation failed: {e}")
         raise
@@ -137,8 +135,7 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     # Load MATLAB file
     mat = loadmat(set_file, squeeze_me=True, struct_as_record=False)
 
-    if verbose:
-        logger.debug(f"Keys in .mat file: {list(mat.keys())}")
+    logger.debug(f"Keys in .mat file: {list(mat.keys())}")
 
     # Get EEG structure
     eeg = mat.get("EEG", mat)
@@ -147,19 +144,17 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     if isinstance(eeg, dict):
         eeg = Bunch(**eeg)
 
-    if verbose:
         logger.debug(f"EEG structure type: {type(eeg)}")
         if hasattr(eeg, '__dict__'):
             logger.debug(f"EEG attributes: {list(eeg.__dict__.keys())[:10]}...")
 
     # Check if data is epoched or continuous
     trials = getattr(eeg, 'trials', 1)
-    if verbose:
-        logger.debug(f"Number of trials: {trials}")
+    logger.debug(f"Number of trials: {trials}")
 
     is_continuous = int(trials) <= 1
 
-    if is_continuous and verbose:
+    if is_continuous:
         logger.debug("Detected continuous data (will be treated as single epoch)")
 
     # Extract data
@@ -168,22 +163,19 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
 
     data = eeg.data
 
-    if verbose:
-        logger.debug(f"Raw data type: {type(data)}")
-        logger.debug(f"Data shape/size: {getattr(data, 'shape', getattr(data, 'size', 'unknown'))}")
+    logger.debug(f"Raw data type: {type(data)}")
+    logger.debug(f"Data shape/size: {getattr(data, 'shape', getattr(data, 'size', 'unknown'))}")
 
     # Handle case where data is stored in separate .fdt file
     if isinstance(data, str):
-        if verbose:
-            logger.debug(f"Data is stored externally in file: {data}")
+        logger.debug(f"Data is stored externally in file: {data}")
 
         # Get data file path
         data_file = Path(data)
         if not data_file.is_absolute():
             data_file = set_file.parent / data_file
 
-        if verbose:
-            logger.debug(f"Loading data from: {data_file}")
+        logger.debug(f"Loading data from: {data_file}")
 
         if not data_file.suffix:
             data_file = data_file.with_suffix('.fdt')
@@ -196,14 +188,12 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         n_times = int(eeg.pnts)
         n_epochs = int(eeg.trials)
 
-        if verbose:
-            logger.debug(f"Expected dimensions: {n_channels} channels x {n_times} timepoints x {n_epochs} epochs")
+        logger.debug(f"Expected dimensions: {n_channels} channels x {n_times} timepoints x {n_epochs} epochs")
 
         # Read binary data (EEGLAB uses float32)
         data = np.fromfile(str(data_file), dtype=np.float32)
 
-        if verbose:
-            logger.debug(f"Loaded {len(data)} values from .fdt file")
+        logger.debug(f"Loaded {len(data)} values from .fdt file")
 
         # Reshape to EEGLAB format: (channels, timepoints, epochs)
         try:
@@ -211,8 +201,7 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         except ValueError:
             try:
                 data = data.reshape(n_channels, n_times, n_epochs, order='C')
-                if verbose:
-                    logger.debug("Note: Using C-order reshape instead of Fortran-order")
+                logger.debug("Note: Using C-order reshape instead of Fortran-order")
             except ValueError:
                 raise ValueError(f"Cannot reshape data. Expected {n_channels}x{n_times}x{n_epochs} = "
                                f"{n_channels*n_times*n_epochs}, but got {len(data)} values")
@@ -220,25 +209,21 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
     # Convert to numpy array if it isn't already
     if not isinstance(data, np.ndarray):
         data = np.array(data)
-        if verbose:
-            logger.debug(f"Converted to numpy array, shape: {data.shape}")
+        logger.debug(f"Converted to numpy array, shape: {data.shape}")
 
     # Ensure we have 3D data
     if data.ndim == 2:
         # Continuous data: (channels, timepoints)
-        if verbose:
-            logger.debug("Data is 2D, treating as single epoch")
+        logger.debug("Data is 2D, treating as single epoch")
         data = data[np.newaxis, :, :]
     elif data.ndim == 3:
         # Epoched data: (channels, timepoints, epochs)
         # Transpose to our format: (epochs, channels, timepoints)
-        if verbose:
-            logger.debug(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
+        logger.debug(f"Data is 3D with shape {data.shape}, transposing to (epochs, channels, times)")
         data = np.transpose(data, (2, 0, 1))
     else:
         raise ValueError(f"Unexpected data dimensions: {data.shape}")
 
-    if verbose:
         logger.debug(f"Final data shape: {data.shape} (epochs, channels, times)")
 
     # Extract channel information
@@ -262,14 +247,12 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
 
         ch_locs = chanlocs
 
-        if verbose:
-            logger.debug(f"Found {len(ch_names)} channels: {ch_names[:5]}..." if len(ch_names) > 5 else f"Channels: {ch_names}")
+        logger.debug(f"Found {len(ch_names)} channels: {ch_names[:5]}..." if len(ch_names) > 5 else f"Channels: {ch_names}")
     else:
         # No channel info, create default names
         n_channels = data.shape[1]
         ch_names = [f'Ch{i+1}' for i in range(n_channels)]
-        if verbose:
-            logger.debug(f"No channel info found, created {len(ch_names)} default channel names")
+        logger.debug(f"No channel info found, created {len(ch_names)} default channel names")
 
     # Extract timing information
     if hasattr(eeg, 'srate'):
@@ -285,10 +268,8 @@ def read_epochs_eeglab_minimal(set_file, verbose=True):
         xmin = float(eeg.tmin)
     else:
         xmin = 0.0
-        if verbose:
-            logger.debug("Warning: Could not find xmin/tmin, assuming 0.0")
+        logger.debug("Warning: Could not find xmin/tmin, assuming 0.0")
 
-    if verbose:
         logger.debug(f"Sampling rate: {sfreq} Hz")
         logger.debug(f"Epoch start time: {xmin} seconds")
 
@@ -324,12 +305,12 @@ def read_csv_data(csv_file, verbose=True):
 
     Returns:
         Tuple of (data, ch_names, metadata_dict)
-        
+
     Raises:
         FileValidationError: If file validation fails
     """
     import csv
-    
+
     csv_file = Path(csv_file)
 
     if verbose:
@@ -352,19 +333,19 @@ def read_csv_data(csv_file, verbose=True):
     try:
         data_rows = []
         ch_names = None
-        
+
         with open(csv_file, 'r', encoding='utf-8', errors='replace') as f:
             reader = csv.reader(f)
-            
+
             # Read headers
             ch_names = next(reader)
-            
+
             # Read data rows
             for row in reader:
                 # Skip empty rows
                 if not row or all(cell.strip() == '' for cell in row):
                     continue
-                
+
                 try:
                     # Convert to float
                     row_data = [float(cell.strip()) for cell in row]
@@ -372,18 +353,18 @@ def read_csv_data(csv_file, verbose=True):
                 except ValueError as e:
                     logger.warning(f"Skipping row with non-numeric data: {row}")
                     continue
-        
+
         if not data_rows:
             raise FileValidationError("CSV file contains no valid numeric data rows")
-        
+
         # Convert to numpy array
         data = np.array(data_rows, dtype=np.float32)
-        
+
         if verbose:
             logger.debug(f"Loaded CSV data with shape: {data.shape}")
             logger.debug(f"Channels: {ch_names}")
             logger.debug(f"Data range: [{data.min():.3f}, {data.max():.3f}]")
-        
+
         # Create metadata
         metadata = {
             'file_path': str(csv_file),
@@ -393,10 +374,9 @@ def read_csv_data(csv_file, verbose=True):
             'data_max': float(data.max()),
             'data_mean': float(data.mean()),
         }
-        
+
         return data, ch_names, metadata
-    
+
     except Exception as e:
         logger.error(f"Error reading CSV file: {e}")
         raise FileValidationError(f"Error reading CSV file: {e}")
-

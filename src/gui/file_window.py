@@ -97,7 +97,7 @@ class MultiSelectDropdown(QWidget):
         self.dropdown_frame = QFrame()
         self.dropdown_frame.setFrameShape(QFrame.StyledPanel)
         self.dropdown_frame.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        
+
         dropdown_layout = QVBoxLayout(self.dropdown_frame)
         dropdown_layout.setContentsMargins(0, 0, 0, 0)
         dropdown_layout.setSpacing(0)
@@ -107,7 +107,7 @@ class MultiSelectDropdown(QWidget):
         self.list_widget.setMaximumHeight(250)
         self.list_widget.setSelectionMode(QListWidget.NoSelection)  # Disable blue highlight
         self.list_widget.itemClicked.connect(self._on_item_clicked)
-        
+
         # Store the original keyPressEvent method and override it
         self._original_list_keypress = self.list_widget.keyPressEvent
         self.list_widget.keyPressEvent = self._on_list_key_press
@@ -119,7 +119,7 @@ class MultiSelectDropdown(QWidget):
         dropdown_layout.addWidget(self.list_widget)
         self.dropdown_frame.setLayout(dropdown_layout)
         self.dropdown_frame.hide()
-        
+
         # Install event filter to detect when dropdown loses focus
         self.dropdown_frame.installEventFilter(self)
 
@@ -168,12 +168,12 @@ class MultiSelectDropdown(QWidget):
         else:
             # Regular item clicked - toggle selection
             is_currently_selected = item_text in self.selected
-            
+
             if is_currently_selected:
                 self.selected.discard(item_text)
             else:
                 self.selected.add(item_text)
-            
+
             # Update styling for this item
             MultiSelectItemDelegate.update_item_style(item, not is_currently_selected)
 
@@ -462,7 +462,7 @@ class FileTab(QWidget):
         epoch_layout = QVBoxLayout(self.epoch_container)
         epoch_layout.setContentsMargins(0, 0, 0, 0)
         epoch_layout.setSpacing(6)
-        
+
         self.epoch_label = QLabel("Epoch (in ms)")
         self.epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
 
@@ -656,7 +656,7 @@ class FileTab(QWidget):
             app.processEvents()
         try:
             logger.debug(f"[Tab] Loading {self.filepath} ...")
-            self.current_epochs = read_epochs_eeglab_minimal(self.filepath, verbose=False)
+            self.current_epochs = read_epochs_eeglab_minimal(self.filepath)
             self._all_sensors = ["All Channels"] + list(self.current_epochs.ch_names)
             self.sensor_combo.set_items(self._all_sensors)
             logger.debug(f"[Tab] Loaded {len(self.current_epochs.ch_names)} channels")
@@ -721,7 +721,7 @@ class FileTab(QWidget):
             channel_picks = None
             selected_sensors = opts["sensors"]
             needs_all = graph_type in ("Topographic Map", "Joint Maps")
-            
+
             if not needs_all and selected_sensors and selected_sensors != ["All Channels"]:
                 # Build picks from selected sensors
                 channel_picks = []
@@ -1345,7 +1345,7 @@ class FileWindow(QMainWindow):
         df_layout.setVerticalSpacing(8)
 
         # Download Graph button
-    
+
         BTN_W, BTN_H = 110, 30
 
         # Download Graph column
@@ -1420,10 +1420,10 @@ class FileWindow(QMainWindow):
 
     def _browse_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
-            self, 
-            "Select .set or .csv file(s)", 
-            "", 
-            "EEG Files (*.set *.csv);;All Files (*.*)" 
+            self,
+            "Select .set or .csv file(s)",
+            "",
+            "EEG Files (*.set *.csv);;All Files (*.*)"
         )
         if paths:
             self.add_files(paths)
@@ -1434,7 +1434,7 @@ class FileWindow(QMainWindow):
         if not current_tab or not hasattr(current_tab, 'figure'):
             QMessageBox.warning(self, "No Graph", "No graph is currently displayed.")
             return
-        
+
         # Get save location from user
         filename, _ = QFileDialog.getSaveFileName(
             self,
@@ -1442,13 +1442,13 @@ class FileWindow(QMainWindow):
             "",
             "PNG Files (*.png);;All Files (*.*)"
         )
-        
+
         if filename:
             try:
                 # Ensure the filename has .png extension
                 if not filename.lower().endswith('.png'):
                     filename += '.png'
-                
+
                 # Save the figure
                 current_tab.figure.savefig(filename, dpi=300, bbox_inches='tight')
                 QMessageBox.information(self, "Success", f"Graph saved as {filename}")
@@ -1464,7 +1464,7 @@ class FileWindow(QMainWindow):
         added = []
         for p in paths:
             ap = os.path.abspath(p)
-            
+
             # Validate file first
             try:
                 file_type, validation_info = FileValidator.validate_file(ap)
@@ -1475,7 +1475,7 @@ class FileWindow(QMainWindow):
                     f"Invalid file:\n{os.path.basename(p)}\n\n{str(e)}"
                 )
                 continue  # Skip this file
-        
+
             # AUTO-CONVERT CSV TO .SET
             if ap.lower().endswith('.csv'):
                 try:
@@ -1488,18 +1488,18 @@ class FileWindow(QMainWindow):
                         f"Could not convert CSV file:\n{os.path.basename(p)}\n\n{str(e)}"
                     )
                     continue  # Skip this file
-        
+
             # Check if already open
             if ap in self._open_paths:
                 continue
-        
+
             self._open_paths.append(ap)
-        
+
             tab = FileTab(filepath=ap, is_dark_mode=self.is_dark_mode, parent=self)
             label = os.path.basename(ap)
             self.tab_widget.addTab(tab, label)
             added.append(label)
-    
+
         if added:
             first_new_idx = self.tab_widget.count() - len(added)
             self.tab_widget.setCurrentIndex(first_new_idx)
@@ -1516,7 +1516,7 @@ class FileWindow(QMainWindow):
         import pandas as pd
         from scipy.io import savemat
         import numpy as np
-    
+
         # Read CSV, skipping header comments
         df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
 
@@ -1525,16 +1525,16 @@ class FileWindow(QMainWindow):
         data = df.iloc[:, 1:5].values.T
 
         data = data / 1e6 # uV -> V
-    
+
         # Ganglion specs
         n_channels = 4
         sfreq = 200
         n_samples = data.shape[1]
-    
+
         # KEEP AS 2D for continuous data (channels, timepoints)
         # DO NOT add epoch dimension - let data_loader handle it
         data_continuous = data.astype(np.float32)
-    
+
         # Channel locations
         ch_locs = [
             {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
@@ -1542,7 +1542,7 @@ class FileWindow(QMainWindow):
             {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
             {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
         ]
-    
+
         # Create EEGLAB structure for CONTINUOUS data
         EEG = {
             'data': data_continuous,  # 2D: (channels, timepoints)
@@ -1557,14 +1557,14 @@ class FileWindow(QMainWindow):
             'chanlocs': ch_locs,
             'ref': 'common',
         }
-    
+
         # Save next to original CSV
         output_path = csv_path.replace('.csv', '_converted.set')
         savemat(output_path, {'EEG': EEG}, appendmat=False)
-        
+
         logger.debug(f"Converted Ganglion CSV to continuous .set format")
         logger.debug(f"  Duration: {n_samples/sfreq:.1f} seconds ({n_samples} samples)")
-    
+
         return output_path
 
     def _close_tab(self, index: int):
