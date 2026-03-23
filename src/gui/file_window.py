@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 from PyQt5.QtCore import Qt, QUrl, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices
+from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices, QColor
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -58,14 +58,16 @@ LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
 #
 #
 class MultiSelectItemDelegate:
-    """Helper to style selected items with grey background."""
+    """Helper to style selected items with blue background."""
     @staticmethod
     def update_item_style(item: QListWidgetItem, is_selected: bool):
         """Update item style based on selection state."""
         if is_selected:
-            item.setBackground(Qt.lightGray)
+            item.setBackground(QColor("#1a73e8"))
+            item.setForeground(QColor("#ffffff"))
         else:
-            item.setBackground(Qt.white)
+            item.setBackground(QColor(Qt.white))
+            item.setForeground(QColor(Qt.black))
 
 
 class MultiSelectDropdown(QWidget):
