@@ -48,9 +48,13 @@ from .utils.checkbox import ToggleSwitch
 from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
 
+import urllib.request
+import threading
+
 logger = logging.getLogger(__name__)
 
 LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
+README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-Potentials/main/README.md" #readme link that our help dialog reads from
 
 #
 #
@@ -338,8 +342,8 @@ embedded Matplotlib figures.</p>
     def __init__(self, is_dark: bool = False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Help — ErrP Visualizer")
-        self.setMinimumSize(620, 540)
-        self.resize(660, 580)
+        self.setMinimumSize(620, 520)
+        self.resize(660, 560)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
@@ -347,8 +351,8 @@ embedded Matplotlib figures.</p>
 
         self.browser = QTextBrowser()
         self.browser.setOpenExternalLinks(True)
-        self.browser.setHtml(self._CONTENT)
         self.browser.setFrameShape(QFrame.NoFrame)
+        self.browser.setHtml("<p style='color:gray;'>Loading README from GitHub…</p>")
         layout.addWidget(self.browser, stretch=1)
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Close)
@@ -356,6 +360,55 @@ embedded Matplotlib figures.</p>
         layout.addWidget(btn_box)
 
         self._apply_theme(is_dark)
+
+        # Fetch README in background thread so dialog opens instantly
+        self._is_dark = is_dark
+        t = threading.Thread(target=self._load_readme, daemon=True)
+        t.start()
+
+    def _load_readme(self):
+        """Fetch README from GitHub and render it. Falls back to _CONTENT on error."""
+        try:
+            req = urllib.request.Request(
+                README_URL,
+                headers={"User-Agent": "ErrP-Visualizer"}
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                md_text = resp.read().decode("utf-8")
+            html = self._md_to_html(md_text)
+        except Exception:
+            html = self._CONTENT  # fallback to hardcoded content
+
+        # Update UI on main thread
+        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+        QMetaObject.invokeMethod(
+            self.browser, "setHtml",
+            Qt.QueuedConnection,
+            Q_ARG(str, html)
+        )
+
+    @staticmethod
+    def _md_to_html(md: str) -> str:
+        """Convert markdown to HTML. Uses `markdown` package if available, else basic fallback."""
+        try:
+            import markdown
+            return markdown.markdown(md, extensions=["fenced_code", "tables"])
+        except ImportError:
+            pass
+
+        # Basic fallback: handle headings, bold, code, links, bullets
+        import re
+        html = md
+        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.+)$',  r'<h2>\1</h2>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.+)$',   r'<h1>\1</h1>', html, flags=re.MULTILINE)
+        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
+        html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
+        html = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', html)
+        html = re.sub(r'^\s*[-*] (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+        html = re.sub(r'(<li>.*</li>\n?)+', r'<ul>\g<0></ul>', html)
+        html = re.sub(r'\n\n+', '</p><p>', html)
+        return f"<p>{html}</p>"
 
     def _apply_theme(self, is_dark: bool):
         if is_dark:
