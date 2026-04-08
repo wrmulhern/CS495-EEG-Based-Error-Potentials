@@ -2,11 +2,11 @@
 
 Project site: https://aliburkemper12.github.io/Capstone-Project-Site/
 
-## Development Environment Setup
+## Installation and Deployment Guide
 
-The dev environment utilizes **uv** as the Python package manager. To install uv, visit this link: [UV Install](https://docs.astral.sh/uv/getting-started/installation/) and follow the instructions for your operating system and terminal.
+The environment utilizes **uv** as the Python package manager. To install uv, visit this link: [UV Install](https://docs.astral.sh/uv/getting-started/installation/) and follow the instructions for your operating system and terminal.
 
-Once installed, clone the repository using either HTTPS or SSH if you have an SSH key set up in GitHub:
+Once installed, clone the repository using either HTTPS or SSH if you have an SSH key on GitHub:
 
 ```bash
 git clone (either https or ssh link)
@@ -19,11 +19,17 @@ cd CS495-EEG-Based-Error-Potentials
 uv sync
 ```
 
-To then run the code using the environment:
+Once the above is completed, you can run the application using this command:
 
 ```bash
 uv run -m src.main
 ```
+
+However, if you would like to create an executable for deployment instead, you can run this command:
+```bash
+uv run pyinstaller --onefile --noconsole --name (executable_name) src/main.py
+```
+which creates an executable of the application for your operating system
 
 ---
 
