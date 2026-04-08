@@ -152,7 +152,7 @@ class FlankerWindow(QDialog):
         self._refresh_ports()
 
         refresh_btn = QPushButton("↺")
-        refresh_btn.setFixedWidth(36)
+        refresh_btn.setFixedWidth(45)
         refresh_btn.setToolTip("Refresh port list")
         refresh_btn.clicked.connect(self._refresh_ports)
 
