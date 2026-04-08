@@ -47,13 +47,14 @@ from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
 from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
+from .flanker_window import FlankerWindow
 
 import urllib.request
 import threading
 
 logger = logging.getLogger(__name__)
 
-LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
+# LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
 README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-Potentials/main/README.md" #readme link that our help dialog reads from
 
 #
@@ -1327,7 +1328,13 @@ class FileWindow(QMainWindow):
         dlg.exec_()
 
     def _open_live_recording(self):
-        QDesktopServices.openUrl(QUrl(LIVE_RECORDING_URL))
+        dlg = FlankerWindow(
+            is_dark=self.is_dark_mode,
+            output_dir=os.path.expanduser("~"),
+            parent=self,
+        )
+        dlg.recording_finished.connect(lambda path: self.add_files([path]))
+        dlg.exec_()
 
     def _style_help_btn(self, dark: bool):
         if dark:
@@ -1564,32 +1571,43 @@ class FileWindow(QMainWindow):
     def convert_ganglion_csv_to_set(self, csv_path: str) -> str:
         """
         Convert Ganglion CSV to EEGLAB .set format.
-        Creates continuous data format (2D: channels × timepoints).
-        Silently handles the conversion - user doesn't need to know.
+ 
+        If the CSV contains event markers (col 14), the data is epoched around
+        stimulus onset events (markers 1 and 2) using a -200ms to +800ms window.
+        This gives a 1-second epoch that captures both the ERN (50-150ms) and
+        Pe (200-400ms) components of the ErrP.
+ 
+        If no markers are present (e.g. a file from the internet), the full
+        recording is saved as continuous data instead.
+ 
         Returns: Path to the converted .set file
         """
         import pandas as pd
         from scipy.io import savemat
         import numpy as np
-
-        # Read CSV, skipping header comments
-        df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
-
-        # Extract 4 EEG channels (columns 1-4 in OpenBCI format)
-        # Shape: (4, n_samples)
-        data = df.iloc[:, 1:5].values.T
-
-        data = data / 1e6 # uV -> V
-
-        # Ganglion specs
+ 
+        # Read CSV — row 0 is BrainFlow column headers (0,1,...,14)
+        df = pd.read_csv(csv_path, comment='%', header=0, skipinitialspace=True)
+ 
+        # If header row is numeric strings, re-read without header
+        try:
+            float(df.columns[0])
+            df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
+            df = df.iloc[1:].reset_index(drop=True)  # drop the numeric header row
+        except (ValueError, IndexError):
+            pass
+ 
+        # EEG channels: cols 1-4 (µV), shape (4, n_samples)
+        raw = df.iloc[:, 1:5].values.T.astype(np.float64)
+        raw = raw / 1e6   # µV → V
+ 
+        # Marker column (col 14) — 0 means no event
+        markers_raw = df.iloc[:, 14].values.astype(np.float64)
+ 
         n_channels = 4
-        sfreq = 200
-        n_samples = data.shape[1]
-
-        # KEEP AS 2D for continuous data (channels, timepoints)
-        # DO NOT add epoch dimension - let data_loader handle it
-        data_continuous = data.astype(np.float32)
-
+        sfreq      = 200
+        n_samples  = raw.shape[1]
+ 
         # Channel locations
         ch_locs = [
             {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
@@ -1597,29 +1615,119 @@ class FileWindow(QMainWindow):
             {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
             {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
         ]
-
-        # Create EEGLAB structure for CONTINUOUS data
-        EEG = {
-            'data': data_continuous,  # 2D: (channels, timepoints)
-            'setname': 'Ganglion_Recording',
-            'nbchan': n_channels,
-            'pnts': n_samples,      # Total number of timepoints
-            'trials': 1,            # Indicates continuous data
-            'srate': sfreq,
-            'xmin': 0.0,
-            'xmax': n_samples / sfreq,
-            'times': (np.arange(n_samples) / sfreq).tolist(),  # In seconds
-            'chanlocs': ch_locs,
-            'ref': 'common',
+ 
+        # ── Marker names ──────────────────────────────────────────────────────
+        EVENT_ID = {
+            'congruent':    1,
+            'incongruent':  2,
+            'correct':      3,
+            'error':        4,
+            'no_response':  5,
         }
-
-        # Save next to original CSV
+        # Reverse map: code → name
+        CODE_NAME = {v: k for k, v in EVENT_ID.items()}
+ 
+        # ── Detect stimulus-onset markers (1 = congruent, 2 = incongruent) ───
+        stim_codes  = {1, 2}
+        stim_samples = [
+            (i, int(markers_raw[i]))
+            for i in range(n_samples)
+            if markers_raw[i] in stim_codes
+        ]
+ 
+        has_markers = len(stim_samples) >= 2   # need at least 2 epochs to be useful
+ 
+        if has_markers:
+            # ── Epoch around each stimulus onset ─────────────────────────────
+            # Window: -200ms pre-stimulus to +800ms post-stimulus (1 s total)
+            pre_ms, post_ms = 200, 800
+            pre_samp  = int(pre_ms  / 1000 * sfreq)   # 40 samples
+            post_samp = int(post_ms / 1000 * sfreq)   # 160 samples
+            epoch_len = pre_samp + post_samp           # 200 samples per epoch
+            tmin_s    = -pre_ms  / 1000                # -0.2 s
+            tmax_s    =  post_ms / 1000                # +0.8 s
+ 
+            epochs_list = []
+            event_rows  = []   # [sample_index, 0, event_code]
+ 
+            for onset_sample, code in stim_samples:
+                start = onset_sample - pre_samp
+                end   = onset_sample + post_samp
+                if start < 0 or end > n_samples:
+                    continue   # skip epochs that would go out of bounds
+ 
+                epoch = raw[:, start:end]   # (4, 200)
+                epochs_list.append(epoch)
+                event_rows.append([onset_sample, 0, code])
+ 
+            if len(epochs_list) < 2:
+                # Not enough valid epochs — fall back to continuous
+                has_markers = False
+            else:
+                # Stack into (n_epochs, n_channels, n_times) then
+                # reshape to EEGLAB's (n_channels, n_times, n_epochs)
+                epoched = np.stack(epochs_list, axis=0)               # (E, 4, 200)
+                data_3d = np.transpose(epoched, (1, 2, 0)).astype(np.float32)  # (4, 200, E)
+ 
+                n_epochs = data_3d.shape[2]
+                events_arr = np.array(event_rows, dtype=np.float64)   # (E, 3)
+ 
+                # Build EEGLAB event struct list
+                eeg_events = [
+                    {
+                        'type':    float(row[2]),
+                        'latency': float(row[0]) + 1,   # EEGLAB uses 1-based sample index
+                        'label':   CODE_NAME.get(int(row[2]), str(int(row[2]))),
+                    }
+                    for row in event_rows
+                ]
+ 
+                EEG = {
+                    'data':    data_3d,
+                    'setname': 'Flanker_ErrP',
+                    'nbchan':  n_channels,
+                    'pnts':    epoch_len,
+                    'trials':  n_epochs,
+                    'srate':   float(sfreq),
+                    'xmin':    tmin_s,
+                    'xmax':    tmax_s,
+                    'times':   (np.arange(epoch_len) / sfreq + tmin_s).tolist(),
+                    'chanlocs': ch_locs,
+                    'ref':     'common',
+                    'event':   eeg_events,
+                    'epoch':   [{'event': i + 1} for i in range(n_epochs)],
+                    'eventdescription': list(CODE_NAME.values()),
+                }
+ 
+                logger.info(
+                    f"Epoched {n_epochs} trials "
+                    f"({sum(1 for _, c in stim_samples if c == 1)} congruent, "
+                    f"{sum(1 for _, c in stim_samples if c == 2)} incongruent) "
+                    f"window {tmin_s*1000:.0f} to {tmax_s*1000:.0f} ms"
+                )
+ 
+        if not has_markers:
+            # ── Continuous fallback ───────────────────────────────────────────
+            EEG = {
+                'data':    raw.astype(np.float32),
+                'setname': 'Ganglion_Recording',
+                'nbchan':  n_channels,
+                'pnts':    n_samples,
+                'trials':  1,
+                'srate':   float(sfreq),
+                'xmin':    0.0,
+                'xmax':    n_samples / sfreq,
+                'times':   (np.arange(n_samples) / sfreq).tolist(),
+                'chanlocs': ch_locs,
+                'ref':     'common',
+            }
+            logger.debug(
+                f"No markers found — saved as continuous "
+                f"({n_samples/sfreq:.1f}s, {n_samples} samples)"
+            )
+ 
         output_path = csv_path.replace('.csv', '_converted.set')
         savemat(output_path, {'EEG': EEG}, appendmat=False)
-
-        logger.debug(f"Converted Ganglion CSV to continuous .set format")
-        logger.debug(f"  Duration: {n_samples/sfreq:.1f} seconds ({n_samples} samples)")
-
         return output_path
 
     def _close_tab(self, index: int):
