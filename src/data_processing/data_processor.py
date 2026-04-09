@@ -1,36 +1,50 @@
 """
-Data processor for EEG epochs - averaging and signal processing
+Epoch-level processing utilities for EEG data.
+
+The central operation is :func:`average_epochs`, which collapses the
+epoch dimension of an :class:`~.data_loader.EpochsData` object to
+produce an :class:`EvokedData` (the averaged event-related potential).
+
+Helper functions :func:`select_channels` and :func:`select_time_window`
+return new :class:`~.data_loader.EpochsData` objects restricted to a
+subset of channels or a narrower time range, respectively.
 """
 
 import numpy as np
 
 
 class EvokedData:
-    """
-    Container for averaged EEG data (evoked response).
+    """Container for an averaged EEG response (ERP / ErrP).
 
-    This represents the average of many epochs (trials), which shows
-    the typical brain response to a stimulus (ERP/ErrP).
+    Produced by :func:`average_epochs`, this holds the mean waveform
+    across all epochs for each channel — i.e. the classic
+    *event-related potential*.
 
     Attributes:
-        data: numpy array of shape (n_channels, n_times)
-        ch_names: list of channel names
-        sfreq: sampling frequency in Hz
-        times: time vector
-        info: dictionary containing metadata
+        data (np.ndarray): Averaged sample matrix with shape
+            ``(n_channels, n_times)``.  Values are in Volts.
+        ch_names (list[str]): Channel labels matching the first axis of
+            *data*.
+        sfreq (float): Sampling frequency in Hz.
+        tmin (float): Epoch start time in seconds.
+        tmax (float): Epoch end time in seconds.
+        times (np.ndarray): 1-D time vector for the epoch in seconds.
+        ch_types (list[str]): Per-channel type strings (default ``'eeg'``).
+        ch_locs: EEGLAB ``chanlocs`` structs, or ``None``.
+        info (dict): Convenience metadata dict with keys ``sfreq``,
+            ``ch_names``, ``nchan``, and ``ch_types``.
     """
 
     def __init__(self, data, ch_names, sfreq, tmin, ch_types=None, ch_locs=None):
         """
-        Initialize EvokedData object.
-
         Parameters:
-            data: array (n_channels, n_times)
-            ch_names: list of channel names
-            sfreq: sampling frequency
-            tmin: start time relative to event
-            ch_types: list of channel types
-            ch_locs: channel location information
+            data (np.ndarray): Array with shape ``(n_channels, n_times)``.
+            ch_names (list[str]): Channel labels.
+            sfreq (float): Sampling frequency in Hz.
+            tmin (float): Start time of the epoch in seconds.
+            ch_types (list[str] | None): Per-channel type strings.
+                Defaults to ``['eeg'] * n_channels``.
+            ch_locs: EEGLAB ``chanlocs`` struct array, or ``None``.
         """
         self.data = data
         self.ch_names = ch_names
@@ -57,23 +71,27 @@ class EvokedData:
                 f"{self.tmin:.3f} - {self.tmax:.3f} s, sfreq={self.sfreq} Hz>")
 
     def get_data(self):
-        """Return the data array."""
+        """Return the raw ``(n_channels, n_times)`` sample array."""
         return self.data
 
 
 def average_epochs(epochs, picks=None):
-    """
-    Average epochs to create an evoked response.
+    """Compute the mean waveform across epochs to produce an ERP.
 
-    This is the main processing step: averaging many trials together
-    to see the typical brain response (ERP/ErrP).
+    This is the core scientific operation: collapsing the epoch
+    (trial) dimension via ``np.mean(data, axis=0)`` so that random
+    noise cancels out and the time-locked brain response emerges.
 
     Parameters:
-        epochs: EpochsData object with raw epochs
-        picks: indices of channels to include (None = all)
+        epochs (EpochsData): Epoched dataset.
+        picks (list[int] | None): Channel indices to include in the
+            average.  When ``None`` (the default) all channels are used.
 
     Returns:
-        EvokedData object with averaged data
+        EvokedData: Averaged waveform with shape
+        ``(len(picks), n_times)`` (or ``(n_channels, n_times)`` when
+        *picks* is ``None``).  Channel locations are copied through so
+        that topographic plotting remains possible.
     """
     if picks is None:
         data_avg = np.mean(epochs.data, axis=0)
@@ -95,15 +113,20 @@ def average_epochs(epochs, picks=None):
 
 
 def select_channels(epochs, channel_indices):
-    """
-    Select specific channels from epochs data.
+    """Return a new :class:`~.data_loader.EpochsData` restricted to the
+    given channels.
+
+    All other metadata (timing, events, sampling rate) is preserved.
+    Channel locations are sliced to match when available.
 
     Parameters:
-        epochs: EpochsData object
-        channel_indices: list of channel indices to keep
+        epochs (EpochsData): Source epoched dataset.
+        channel_indices (list[int]): Indices into ``epochs.ch_names``
+            selecting the channels to keep.
 
     Returns:
-        New EpochsData object with selected channels
+        EpochsData: A new object whose ``data`` has shape
+        ``(n_epochs, len(channel_indices), n_times)``.
     """
     from .data_loader import EpochsData
 
@@ -129,16 +152,21 @@ def select_channels(epochs, channel_indices):
 
 
 def select_time_window(epochs, tmin, tmax):
-    """
-    Select a specific time window from epochs.
+    """Return a new :class:`~.data_loader.EpochsData` cropped to a time
+    window.
+
+    The nearest sample to *tmin* and *tmax* is found via
+    ``np.argmin(|times − t|)``, so the actual window may be up to
+    ±0.5 samples wider than requested.
 
     Parameters:
-        epochs: EpochsData object
-        tmin: start time in seconds
-        tmax: end time in seconds
+        epochs (EpochsData): Source epoched dataset.
+        tmin (float): Desired start time in seconds.
+        tmax (float): Desired end time in seconds.
 
     Returns:
-        New EpochsData object with selected time window
+        EpochsData: A new object whose time axis spans approximately
+        ``[tmin, tmax]``.  Channel and event metadata are preserved.
     """
     from .data_loader import EpochsData
 
