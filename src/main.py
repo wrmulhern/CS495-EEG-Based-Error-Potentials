@@ -1,3 +1,16 @@
+"""
+Application entry point for the ErrP Visualizer.
+
+Run with::
+
+    python -m src.main [--input FILE] [--log-level LEVEL]
+
+The module creates a ``QApplication``, applies the default light theme,
+opens a :class:`~src.gui.file_window.FileWindow`, and enters the Qt
+event loop.  An optional ``--input`` flag pre-loads a single ``.set``
+file on launch.
+"""
+
 import logging
 import argparse
 import os
@@ -16,7 +29,7 @@ LOG_LEVELS = {
 }
 
 def setup_logging(level: int):
-    # log level for everything but our codebase
+    """Configure logging: WARNING for third-party libs, *level* for ``src.*``."""
     logging.basicConfig(
             level=logging.WARNING,
             format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -27,6 +40,7 @@ def setup_logging(level: int):
     logging.getLogger("src").setLevel(level)
 
 def main():
+    """Parse CLI args, configure logging, and launch the Qt GUI."""
     parser = argparse.ArgumentParser()
 
     parser.add_argument(

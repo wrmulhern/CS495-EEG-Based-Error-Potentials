@@ -1,15 +1,18 @@
+"""
+Dark-mode QPalette for the Fusion style.
+
+Mirrors :func:`~src.gui.themes.light_theme.apply_light_theme` but
+uses a ``#121212`` background, ``#e8eaed`` text, and ``#8ab4f8`` blue
+accent — consistent with the dark-mode stylesheets applied per-widget
+in :meth:`~src.gui.file_window.FileWindow._apply_window_dark_styles`.
+"""
+
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import QApplication
 
 
 def apply_dark_theme(app: QApplication) -> None:
-    """
-    Apply a high-contrast dark theme to the PyQt application.
-
-    This mirrors the structure of the existing light theme function so that
-    switching between themes simply swaps palette colors while keeping the
-    same Qt "Fusion" style.
-    """
+    """Set the Fusion style and a dark ``QPalette`` on *app*."""
     app.setStyle("Fusion")
 
     pal = QPalette()

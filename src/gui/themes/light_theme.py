@@ -1,10 +1,21 @@
+"""
+Light-mode QPalette for the Fusion style.
+
+Applies a Google-Material-inspired colour scheme (white backgrounds,
+``#202124`` text, ``#1a73e8`` accent) as the application-wide default.
+Called once at startup and again whenever the user switches away from
+dark mode.
+"""
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import (
     QApplication
 )
 
+
 def apply_light_theme(app: QApplication) -> None:
+    """Set the Fusion style and a light ``QPalette`` on *app*."""
     app.setStyle("Fusion")
 
     pal = QPalette()
