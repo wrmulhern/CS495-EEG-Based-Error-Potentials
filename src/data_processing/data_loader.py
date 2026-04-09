@@ -1,5 +1,11 @@
 """
-Data loader for EEGLAB .set files (MNE-free implementation)
+MNE-free reader for EEGLAB ``.set`` / ``.fdt`` files.
+
+EEGLAB stores epoched EEG data in MATLAB v5 ``.mat`` files (renamed to
+``.set``).  When the dataset is large the raw sample matrix is written to a
+companion ``.fdt`` file as flat ``float32`` values in Fortran (column-major)
+order.  This module handles both layouts as well as continuous (single-epoch)
+recordings, returning a unified :class:`EpochsData` container.
 """
 
 import os
@@ -13,7 +19,13 @@ from .file_validator import FileValidator, FileValidationError
 logger = logging.getLogger(__name__)
 
 class Bunch(dict):
-    """Dictionary that allows attribute-style access."""
+    """Dict subclass that exposes keys as attributes.
+
+    Used to mimic MATLAB struct behaviour after ``scipy.io.loadmat``
+    deserialises an EEGLAB ``.set`` file whose top-level EEG variable
+    is returned as a plain dictionary rather than a record object.
+    """
+
     def __getattr__(self, key):
         try:
             return self[key]
@@ -25,33 +37,48 @@ class Bunch(dict):
 
 
 class EpochsData:
-    """
-    Container for epoched EEG data with basic processing and visualization.
+    """Container for epoched EEG data.
+
+    This is the primary data object returned by
+    :func:`read_epochs_eeglab_minimal`.  It stores the 3-D sample matrix
+    together with channel metadata, timing information, and (when available)
+    electrode locations.
 
     Attributes:
-        data: numpy array of shape (n_epochs, n_channels, n_times)
-        ch_names: list of channel names
-        sfreq: sampling frequency in Hz
-        times: time vector for each epoch
-        events: event information
-        event_id: mapping of event names to event codes
-        info: dictionary containing metadata
+        data (np.ndarray): Sample matrix with shape
+            ``(n_epochs, n_channels, n_times)``.  Values are in Volts.
+        ch_names (list[str]): Human-readable channel labels (e.g. ``'Fz'``).
+        sfreq (float): Sampling frequency in Hz.
+        tmin (float): Start time of each epoch in seconds relative to the
+            time-locking event.
+        tmax (float): End time of each epoch in seconds (derived from
+            *tmin*, *sfreq*, and the number of time-points).
+        times (np.ndarray): 1-D time vector for one epoch in seconds.
+        events (np.ndarray | None): Event array with shape ``(n_events, 3)``
+            where columns are ``[sample, 0, event_code]``, or ``None``.
+        event_id (dict[str, int]): Mapping of event names to integer codes.
+        ch_types (list[str]): Per-channel type strings (default ``'eeg'``).
+        ch_locs: Channel location structs from EEGLAB ``chanlocs``
+            (may expose ``.X``, ``.Y``, ``.theta``, ``.radius``), or ``None``.
+        info (dict): Convenience metadata dict with keys ``sfreq``,
+            ``ch_names``, ``nchan``, and ``ch_types``.
     """
 
     def __init__(self, data, ch_names, sfreq, tmin, events=None, event_id=None,
                  ch_types=None, ch_locs=None):
         """
-        Initialize EpochsData object.
-
         Parameters:
-            data: array (n_epochs, n_channels, n_times)
-            ch_names: list of channel names
-            sfreq: sampling frequency
-            tmin: start time of epoch relative to event
-            events: event array (n_events, 3) with [sample, 0, event_code]
-            event_id: dict mapping event names to codes
-            ch_types: list of channel types (e.g., 'eeg', 'eog')
-            ch_locs: channel location information
+            data (np.ndarray): Array with shape
+                ``(n_epochs, n_channels, n_times)``.
+            ch_names (list[str]): Channel labels, length must equal
+                ``data.shape[1]``.
+            sfreq (float): Sampling frequency in Hz.
+            tmin (float): Epoch start time in seconds relative to the event.
+            events (np.ndarray | None): Optional event array.
+            event_id (dict | None): Optional event-name → code mapping.
+            ch_types (list[str] | None): Per-channel type strings.  Defaults
+                to ``['eeg'] * n_channels``.
+            ch_locs: EEGLAB ``chanlocs`` struct array, or ``None``.
         """
         self.data = data
         self.ch_names = ch_names
@@ -82,15 +109,15 @@ class EpochsData:
                 f"sfreq={self.sfreq} Hz>")
 
     def get_data(self):
-        """Return the data array."""
+        """Return the raw ``(n_epochs, n_channels, n_times)`` sample array."""
         return self.data
 
     def to_data_frame(self):
-        """
-        Convert epochs to a pandas-like structure (returns dict for now).
+        """Return a summary dict describing the data dimensions.
 
-        Returns:
-            Dictionary with shape information
+        This is a lightweight stand-in for a full ``pandas.DataFrame``
+        conversion.  The returned dict contains the keys ``shape``,
+        ``n_epochs``, ``n_channels``, and ``n_times``.
         """
         n_epochs, n_channels, n_times = self.data.shape
         return {
@@ -102,21 +129,39 @@ class EpochsData:
 
 
 def read_epochs_eeglab_minimal(set_file):
-    """
-    Read EEGLAB .set file containing epoched data.
+    """Read an EEGLAB ``.set`` file and return an :class:`EpochsData` object.
 
-    This is a minimal implementation that reads the essential fields
-    from EEGLAB format without requiring MNE.
+    This is a self-contained reader that replaces
+    ``mne.io.read_epochs_eeglab`` without pulling in MNE-Python.  It
+    handles three storage layouts that EEGLAB may produce:
+
+    * **Embedded epoched data** — the sample matrix is stored directly
+      inside the ``.set`` (MATLAB ``.mat``) file with shape
+      ``(channels, timepoints, epochs)``.
+    * **External ``.fdt`` file** — the ``data`` field in the ``.set``
+      file is a filename string pointing to a companion binary file of
+      raw ``float32`` values in Fortran order.
+    * **Continuous (single-epoch) data** — 2-D ``(channels, timepoints)``
+      matrix, e.g. from an OpenBCI Ganglion CSV that was converted to
+      ``.set`` format.  Treated as one epoch.
+
+    The file is validated via :class:`~.file_validator.FileValidator`
+    before any data is read.
 
     Parameters:
-        set_file: path to .set file
-        verbose: print debugging information
+        set_file (str | pathlib.Path): Path to the ``.set`` file.
 
     Returns:
-        EpochsData object
+        EpochsData: Loaded epochs with data in shape
+        ``(n_epochs, n_channels, n_times)``.
 
     Raises:
-        FileValidationError: If file validation fails
+        FileValidationError: If the file fails validation (wrong
+            extension, missing required fields, etc.).
+        FileNotFoundError: If a referenced ``.fdt`` companion file
+            does not exist.
+        ValueError: If the data cannot be reshaped to the expected
+            dimensions.
     """
     set_file = Path(set_file)
 
@@ -296,18 +341,33 @@ def read_epochs_eeglab_minimal(set_file):
 
 
 def read_csv_data(csv_file, verbose=True):
-    """
-    Read EEG data from CSV file with validation.
+    """Read a generic EEG CSV file and return raw arrays.
+
+    Unlike :func:`read_epochs_eeglab_minimal` this does **not** return an
+    :class:`EpochsData` object.  It is a lower-level helper used when
+    only the raw numeric matrix and column headers are needed (for
+    example, during CSV → ``.set`` conversion in the GUI).
+
+    The file is validated via :class:`~.file_validator.FileValidator`
+    before reading.  Rows that cannot be converted to floats are skipped
+    with a logged warning.
 
     Parameters:
-        csv_file: path to .csv file
-        verbose: print debugging information
+        csv_file (str | pathlib.Path): Path to the ``.csv`` file.
+        verbose (bool): If ``True``, emit ``DEBUG``-level log messages
+            while loading.
 
     Returns:
-        Tuple of (data, ch_names, metadata_dict)
+        tuple[np.ndarray, list[str], dict]: A 3-tuple of:
+
+        * **data** — ``float32`` array with shape ``(n_samples, n_columns)``.
+        * **ch_names** — column headers from the first row of the CSV.
+        * **metadata** — dict with keys ``file_path``, ``n_channels``,
+          ``n_samples``, ``data_min``, ``data_max``, and ``data_mean``.
 
     Raises:
-        FileValidationError: If file validation fails
+        FileValidationError: If the file fails validation or contains
+            no valid numeric rows.
     """
     import csv
 

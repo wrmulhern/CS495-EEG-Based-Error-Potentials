@@ -616,7 +616,11 @@ def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
     ax.axis('off')
     ax.set_title(f'{actual_time * 1000:.1f} ms', fontsize=14)
 
-    fig.suptitle('Topographic Map', fontsize=14, y=0.97)
+    fig.suptitle('Topographic Map', fontsize=14, y=0.96)
+
+    # Set subplot margins BEFORE colorbar so the colorbar steals from the
+    # right edge of a centred region and set_anchor('C') is not overridden.
+    fig.subplots_adjust(left=0.08, right=0.88, top=0.86, bottom=0.04)
 
     norm = plt.Normalize(vmin=-vmax, vmax=vmax)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
@@ -626,7 +630,5 @@ def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
     cbar.set_label('Amplitude (µV)')
 
     _apply_mpl_theme(fig, [ax, cbar.ax], theme=theme)
-
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
 
     return fig
