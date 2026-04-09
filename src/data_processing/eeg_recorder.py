@@ -1,14 +1,27 @@
 """
-eeg_recorder.py
-Streams EEG data from an OpenBCI Ganglion via Brainflow.
-Runs in a background thread; the main thread calls insert_marker()
-to stamp events, then stop() to finalize and save.
+Thread-safe EEG streaming and recording via an OpenBCI Ganglion dongle.
 
-Hardcoded to work with ganglion openBCI and 4 channels (col 1-4 in Brainflow data). Markers are floats in col 14.
-Uses brainflow for streaming and CSV export.
-Uses pyserial to get available ports for user dropdown.
+This module wraps the `Brainflow <https://brainflow.org>`_ library to
+provide a simple start / insert_marker / stop lifecycle for recording
+EEG during the Flanker task (see
+:class:`~src.gui.flanker_window.FlankerWindow`).
 
-Saves csv locally.
+Hardware assumptions
+~~~~~~~~~~~~~~~~~~~~
+* **Board**: OpenBCI Ganglion (``BoardIds.GANGLION_NATIVE_BOARD``).
+* **Channels**: 4 EEG channels in BrainFlow columns 1–4 (µV).
+* **Sample rate**: 200 Hz native.
+* **Markers**: Injected as floats into BrainFlow column 14.
+
+The public entry point is :class:`EEGRecorder`.  All marker constants
+are module-level integers that match the event codes used by
+:mod:`~src.gui.flanker_window` and the CSV→.set converter in
+:meth:`~src.gui.file_window.FileWindow.convert_ganglion_csv_to_set`.
+
+``brainflow`` and ``pyserial`` are optional dependencies — the rest of
+the application functions without them (the Flanker task runs in
+"no-EEG" mode and :meth:`EEGRecorder.list_ports` returns an empty
+list).
 """
 
 import threading
@@ -19,61 +32,58 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-#
-#
-# Constants for event markers (must be floats for Brainflow)
-#
-#
-MARKER_CONGRUENT     = 1   # congruent stimulus onset   (<<<  or  >>>)
-MARKER_INCONGRUENT   = 2   # incongruent stimulus onset (<<>  or  >><)
-
-MARKER_CORRECT       = 3   # correct response
-MARKER_ERROR         = 4   # error response
-
-MARKER_NO_RESPONSE   = 5   # timeout / no keypress
+MARKER_CONGRUENT     = 1   #: Congruent stimulus onset  (``< < < < <`` or ``> > > > >``).
+MARKER_INCONGRUENT   = 2   #: Incongruent stimulus onset (``< < > < <`` or ``> > < > >``).
+MARKER_CORRECT       = 3   #: Participant responded correctly.
+MARKER_ERROR         = 4   #: Participant responded incorrectly (expected to elicit ERN).
+MARKER_NO_RESPONSE   = 5   #: Response window expired with no keypress.
 
 
 class EEGRecorder:
-    """
-    Manages a Brainflow Ganglion session.
+    """Manages a single BrainFlow Ganglion streaming session.
 
-    Usage
-    -----
-        recorder = EEGRecorder(port="COM3")
-        recorder.start()                     # begins streaming
-        recorder.insert_marker(MARKER_CONGRUENT)
+    Typical usage inside :class:`~src.gui.flanker_window.FlankerWindow`::
+
+        recorder = EEGRecorder(port="/dev/cu.usbmodem1")
+        recorder.start()                          # opens the stream
+        recorder.insert_marker(MARKER_CONGRUENT)  # stamp trial onset
         ...
-        path = recorder.stop(output_dir)     # saves CSV, returns path
+        csv_path = recorder.stop(output_dir)      # saves & returns path
+
+    All public methods are thread-safe (guarded by an internal lock).
+
+    Class Attributes:
+        SFREQ (int): Ganglion native sample rate (200 Hz).
+        N_CHANNELS (int): Number of EEG channels (4).
+        EEG_COLS (list[int]): BrainFlow column indices for EEG data.
+        TS_COL (int): BrainFlow column index for the Unix timestamp.
+        MARKER_COL (int): BrainFlow column index for event markers.
     """
 
-    SFREQ       = 200          # Ganglion native sample rate (Hz)
-    N_CHANNELS  = 4            # EEG channels
-    # BrainFlow column indices for GANGLION_BOARD
+    SFREQ       = 200
+    N_CHANNELS  = 4
     EEG_COLS    = [1, 2, 3, 4]
     TS_COL      = 13
     MARKER_COL  = 14
 
     def __init__(self, port: str):
         """
-        Parameters
-        ----------
-        port : str
-            Serial port for the Ganglion dongle, e.g. "COM3" or "/dev/ttyUSB0".
+        Parameters:
+            port (str): Serial port for the Ganglion dongle, e.g.
+                ``"COM3"`` (Windows) or ``"/dev/cu.usbmodem1"`` (macOS).
         """
         self.port = port
         self._board = None
         self._lock  = threading.Lock()
         self._running = False
 
-    #
-    #
-    # Public API - streams data from ganglion
-    #
-    #
-
-    # once user presses 'connect'
     def start(self):
-        """Connect to the Ganglion and begin streaming."""
+        """Connect to the Ganglion and begin streaming.
+
+        Raises:
+            RuntimeError: If the board cannot be reached on the
+                configured serial port.
+        """
         try:
             from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
             from brainflow.data_filter import DataFilter
@@ -95,7 +105,14 @@ class EEGRecorder:
             raise RuntimeError(f"Could not connect to Ganglion on {self.port}: {exc}") from exc
 
     def insert_marker(self, value: float):
-        """Stamp an event into the EEG stream (thread safe)."""
+        """Stamp an event marker into the live EEG stream (thread-safe).
+
+        No-op if the recorder is not running.  Silently logs a warning
+        if the underlying BrainFlow call fails.
+
+        Parameters:
+            value (float): One of the ``MARKER_*`` constants.
+        """
         if not self._running or self._board is None:
             return
         with self._lock:
@@ -105,18 +122,24 @@ class EEGRecorder:
                 logger.warning(f"insert_marker failed: {exc}")
 
     def stop(self, output_dir: str) -> str:
-        """
-        Stop streaming, pull all data, save to CSV, return the CSV path.
+        """Stop streaming, pull all buffered data, and save to CSV.
 
-        Parameters
-        ----------
-        output_dir : str
-            Directory where the CSV will be written.
+        The CSV has 15 columns matching BrainFlow's Ganglion layout:
+        column 0 = sample index, 1–4 = EEG (µV), 5–12 = zeros,
+        13 = Unix timestamp, 14 = marker.
 
-        Returns
-        -------
-        str
-            Absolute path to the saved CSV file.
+        The filename is timestamped:
+        ``flanker_eeg_YYYYMMDD_HHMMSS.csv``.
+
+        Parameters:
+            output_dir (str): Directory for the output file (created
+                if it does not exist).
+
+        Returns:
+            str: Absolute path to the saved CSV.
+
+        Raises:
+            RuntimeError: If the recorder was never started.
         """
         if not self._running or self._board is None:
             raise RuntimeError("Recorder was not started.")
@@ -162,17 +185,15 @@ class EEGRecorder:
 
     @property
     def is_running(self) -> bool:
+        """``True`` while the stream is active."""
         return self._running
-
-    #
-    #
-    # Static helpers
-    # 
-    #
 
     @staticmethod
     def list_ports() -> list:
-        """Return available serial port names."""
+        """Return available serial-port device names via ``pyserial``.
+
+        Returns an empty list if ``pyserial`` is not installed.
+        """
         try:
             import serial.tools.list_ports
             return [p.device for p in serial.tools.list_ports.comports()]
@@ -181,6 +202,7 @@ class EEGRecorder:
 
     @staticmethod
     def is_brainflow_available() -> bool:
+        """Check whether the ``brainflow`` package can be imported."""
         try:
             import brainflow  # noqa: F401
             return True

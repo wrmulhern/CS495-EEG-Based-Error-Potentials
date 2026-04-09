@@ -1,14 +1,25 @@
+"""
+iOS-style toggle switch implemented as a styled ``QCheckBox``.
+
+Used by :class:`~src.gui.file_window.FileWindow` for the dark-mode
+toggle in the top bar.  The widget preserves the standard
+``QCheckBox`` API (``isChecked()``, ``stateChanged`` signal, etc.)
+while rendering as a 44×24 px rounded pill via Qt stylesheets.
+"""
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QCheckBox
 
 
 class ToggleSwitch(QCheckBox):
-    """
-    A simple toggle-looking checkbox (still a QCheckBox under the hood).
+    """Pill-shaped toggle switch with light and dark theme variants.
 
-    The widget keeps the same API as a normal `QCheckBox` but exposes a
-    `set_dark_mode` helper so the containing window can restyle the control
-    when the global theme changes, instead of hard-coding colors here.
+    Internally just a ``QCheckBox`` with a large indicator and no text.
+    Call :meth:`set_dark_mode` whenever the app theme changes to swap
+    between the two colour palettes.
+
+    Parameters:
+        text (str): Optional label (usually ``""`` for a bare toggle).
     """
 
     def __init__(self, text: str = ""):
@@ -19,9 +30,9 @@ class ToggleSwitch(QCheckBox):
         self._apply_styles()
 
     def set_dark_mode(self, is_dark: bool) -> None:
-        """
-        Update the toggle's appearance for light vs dark mode while keeping
-        the same structure (indicator sizes, border radius, etc.).
+        """Switch between light and dark colour palettes.
+
+        No-op if the mode hasn't actually changed.
         """
         if self._is_dark_mode == is_dark:
             return
@@ -29,8 +40,8 @@ class ToggleSwitch(QCheckBox):
         self._apply_styles()
 
     def _apply_styles(self) -> None:
+        """Re-apply the full stylesheet for the current theme."""
         if not self._is_dark_mode:
-            # Light mode: matches the original styling
             self.setStyleSheet(
                 """
                 QCheckBox {
