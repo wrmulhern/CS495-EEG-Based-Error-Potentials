@@ -1,3 +1,35 @@
+"""
+Main application window and per-file tab widget for the ErrP Visualizer.
+
+This module contains the entire desktop GUI layer built on PyQt5 and
+Matplotlib:
+
+Classes
+-------
+* :class:`MultiSelectItemDelegate` / :class:`MultiSelectDropdown` —
+  custom multi-select channel picker with checkbox-style toggling.
+* :class:`HelpDialog` — modal dialog that fetches and renders the
+  GitHub README (falls back to embedded HTML content on network failure).
+* :class:`FileTab` — self-contained widget for a single loaded EEG
+  file.  Owns the Matplotlib canvas, all "Graph Options" controls, the
+  animated-topomap playback logic, and lazy data loading.
+* :class:`FileWindow` — top-level ``QMainWindow`` that manages the tab
+  bar, bottom drag-and-drop zone, file browsing, CSV-to-.set
+  conversion, dark-mode toggling, and the "Record EEG" / "Help"
+  buttons.
+
+Design notes
+~~~~~~~~~~~~
+* **Lazy loading** — ``FileTab`` does not read the ``.set`` file until
+  the user clicks *Visualize* for the first time.  A modal
+  ``QProgressDialog`` provides feedback during loading.
+* **Independent tabs** — each tab keeps its own ``EpochsData``, figure,
+  and control state.  Switching tabs is instant.
+* **Theming** — light and dark palettes are applied to both Qt widgets
+  *and* embedded Matplotlib figures via ``_apply_mpl_theme`` and per-
+  widget stylesheet swapping.
+"""
+
 import os
 import logging
 from typing import List, Optional
@@ -63,10 +95,15 @@ README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-
 #
 #
 class MultiSelectItemDelegate:
-    """Helper to style selected items with blue background."""
+    """Utility for styling ``QListWidgetItem`` rows in the channel picker.
+
+    Selected items get a blue (#1a73e8) background with white text;
+    deselected items revert to the default white/black colours.  Used
+    exclusively by :class:`MultiSelectDropdown`.
+    """
     @staticmethod
     def update_item_style(item: QListWidgetItem, is_selected: bool):
-        """Update item style based on selection state."""
+        """Set the foreground and background colours of *item*."""
         if is_selected:
             item.setBackground(QColor("#1a73e8"))
             item.setForeground(QColor("#ffffff"))
@@ -76,13 +113,22 @@ class MultiSelectItemDelegate:
 
 
 class MultiSelectDropdown(QWidget):
+    """Custom multi-select dropdown for EEG channel selection.
+
+    Presents a ``QPushButton`` that, when clicked, opens a popup
+    ``QListWidget``.  Items are toggled individually with a single
+    click; the first item (``"All Channels"``) acts as a select-all /
+    deselect-all toggle.  The popup closes on *Enter*, *Escape*, or
+    focus loss.
+
+    Signals:
+        selectionChanged(list[str]): Emitted whenever the selection
+            set changes.
+        confirmed(): Emitted when the popup is dismissed (used to mark
+            the Visualize button as needing re-run).
     """
-    A custom multi-select dropdown widget with checkboxes.
-    Supports "Select All" / "Deselect All" functionality.
-    Stays open until clicking outside or pressing Enter.
-    """
-    selectionChanged = pyqtSignal(list)  # Emits list of selected items
-    confirmed = pyqtSignal()  # Emits when Enter is pressed
+    selectionChanged = pyqtSignal(list)
+    confirmed = pyqtSignal()
 
     def __init__(self, items: List[str], parent=None):
         super().__init__(parent)
@@ -131,6 +177,7 @@ class MultiSelectDropdown(QWidget):
         self.dropdown_frame.installEventFilter(self)
 
     def toggle_dropdown(self):
+        """Show the popup if hidden, or hide it if visible."""
         if self.dropdown_frame.isVisible():
             self.close_dropdown()
         else:
@@ -153,7 +200,7 @@ class MultiSelectDropdown(QWidget):
         self.confirmed.emit()
 
     def _on_item_clicked(self, item: QListWidgetItem):
-        """Handle item click to toggle selection."""
+        """Toggle the clicked item and synchronise the "All Channels" state."""
         idx = self.list_widget.row(item)
         item_text = self.items[idx]
 
@@ -201,7 +248,7 @@ class MultiSelectDropdown(QWidget):
         self._update_button_text()
 
     def _on_list_key_press(self, event):
-        """Handle key press in list widget."""
+        """Close the popup on Enter / Escape; delegate other keys."""
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             self.close_dropdown()
         elif event.key() == Qt.Key_Escape:
@@ -210,7 +257,7 @@ class MultiSelectDropdown(QWidget):
             self._original_list_keypress(event)
 
     def eventFilter(self, obj, event):
-        """Handle events on the dropdown frame to close when it loses focus."""
+        """Auto-close the popup when the dropdown frame loses focus."""
         if obj == self.dropdown_frame:
             if event.type() == 3:  # QEvent.FocusOut
                 if self.dropdown_frame.isVisible():
@@ -219,7 +266,7 @@ class MultiSelectDropdown(QWidget):
         return super().eventFilter(obj, event)
 
     def _update_button_text(self):
-        """Update button text to show current selection."""
+        """Summarise the current selection on the dropdown button face."""
         if not self.selected:
             text = "No Selection"
         elif "All Channels" in self.selected and len(self.selected) == len(self.items):
@@ -233,11 +280,11 @@ class MultiSelectDropdown(QWidget):
         self.button.setText(text)
 
     def get_selected(self) -> List[str]:
-        """Return list of selected items."""
+        """Return the currently selected channel names."""
         return list(self.selected)
 
     def set_items(self, items: List[str]):
-        """Update the list of items."""
+        """Replace the available items and clear the selection."""
         self.items = items
         self.list_widget.clear()
         self.selected.clear()
@@ -267,9 +314,16 @@ class MultiSelectDropdown(QWidget):
 #
 #
 class HelpDialog(QDialog):
-    """
-    Modal help / how-to dialog accessible from the top bar.
-    Uses QTextBrowser so the content is scrollable and supports basic HTML.
+    """Modal help dialog accessible from the top-bar "? Help" button.
+
+    On open, a background thread fetches the project README from
+    GitHub (:data:`README_URL`) and renders it as HTML via the
+    ``markdown`` package (if installed) or a regex-based fallback.
+    While the fetch is in flight the dialog shows a "Loading…" message
+    so it opens instantly.  If the network request fails, the dialog
+    falls back to :attr:`_CONTENT`, an embedded HTML quick-start guide.
+
+    The dialog respects the current light / dark theme.
     """
 
     _CONTENT = """
@@ -368,7 +422,7 @@ embedded Matplotlib figures.</p>
         t.start()
 
     def _load_readme(self):
-        """Fetch README from GitHub and render it. Falls back to _CONTENT on error."""
+        """Background worker: fetch, convert, and inject the README HTML."""
         try:
             req = urllib.request.Request(
                 README_URL,
@@ -390,7 +444,7 @@ embedded Matplotlib figures.</p>
 
     @staticmethod
     def _md_to_html(md: str) -> str:
-        """Convert markdown to HTML. Uses `markdown` package if available, else basic fallback."""
+        """Convert Markdown text to HTML, with a regex fallback if ``markdown`` is not installed."""
         try:
             import markdown
             return markdown.markdown(md, extensions=["fenced_code", "tables"])
@@ -435,18 +489,30 @@ embedded Matplotlib figures.</p>
 #
 #
 class FileTab(QWidget):
-    """
-    Self-contained widget representing a single loaded .set file.
+    """Self-contained tab widget for a single loaded ``.set`` file.
 
-    Contained within FileTab:
-      - The matplotlib canvas / figure
-      - Graph Options controls
-      - Visualize button
-      - Cached EpochsData (not loaded until visualize clicked)
+    Each ``FileTab`` owns:
 
-    Independent from FileTab:
-      - Dark-mode state
-      - The drag/drop zone and browse button
+    * A Matplotlib ``Figure`` / ``FigureCanvas`` embedded in the left
+      pane, showing either a placeholder or the latest visualisation.
+    * A "Graph Options" panel on the right with epoch-range inputs,
+      channel selection (:class:`MultiSelectDropdown`), graph-type
+      combo, topomap-mode selector, animation controls, and the
+      *Visualize* button.
+    * Cached :class:`~src.data_processing.data_loader.EpochsData` —
+      populated lazily the first time the user clicks *Visualize*.
+    * Animation state for the animated-topomap mode (``QTimer``,
+      ``QSlider``, play/pause logic).
+
+    The parent :class:`FileWindow` owns the dark-mode toggle and
+    drag-and-drop zone; it calls :meth:`apply_theme` when the global
+    theme changes.
+
+    Parameters:
+        filepath (str): Absolute path to the ``.set`` file.
+        is_dark_mode (bool): Initial theme state.
+        parent (QWidget | None): Parent widget (usually the
+            ``QTabWidget``).
     """
 
     def __init__(self, filepath: str, is_dark_mode: bool = False, parent=None):
@@ -490,6 +556,7 @@ class FileTab(QWidget):
 
 
     def _build_graph_frame(self) -> QFrame:
+        """Create the left-hand pane containing the Matplotlib canvas."""
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         layout = QVBoxLayout(frame)
@@ -503,6 +570,7 @@ class FileTab(QWidget):
         return frame
 
     def _build_options_panel(self) -> QGroupBox:
+        """Build the right-hand "Graph Options" panel and all sub-controls."""
         box = QGroupBox("Graph Options")
         self.options_box = box
         box.setStyleSheet(
@@ -689,11 +757,16 @@ class FileTab(QWidget):
         self.reset_visualize_button()
         return box
 
-    # Lazy loading -> once visualize is clicked
     def ensure_loaded(self) -> bool:
-        """
-        Load the .set file if not already loaded.
-        Returns True on success, False on failure.
+        """Lazily load the ``.set`` file, showing a progress dialog.
+
+        On first call, reads the file via
+        :func:`~src.data_processing.data_loader.read_epochs_eeglab_minimal`,
+        populates :attr:`current_epochs`, and refreshes the channel
+        dropdown.  Subsequent calls are no-ops.
+
+        Returns:
+            bool: ``True`` if data is available, ``False`` on failure.
         """
         if self.current_epochs is not None:
             return True
@@ -729,8 +802,14 @@ class FileTab(QWidget):
             if app is not None:
                 app.restoreOverrideCursor()
 
-    # Visualize
     def visualize(self):
+        """Run the full visualisation pipeline for the current options.
+
+        Steps: ensure data is loaded → apply epoch window → select
+        channels → average epochs → dispatch to the appropriate plot
+        function → replace the canvas.  For the animated topomap mode,
+        delegates to :meth:`_setup_animated_topomap` instead.
+        """
         if not self.ensure_loaded():
             return
 
@@ -836,6 +915,7 @@ class FileTab(QWidget):
         self.reset_visualize_button()
 
     def _replace_canvas(self, new_fig: Figure):
+        """Swap out the current Matplotlib canvas for one backed by *new_fig*."""
         layout = self.graph_frame.layout()
         layout.removeWidget(self.canvas)
         self.canvas.setParent(None)
@@ -846,8 +926,8 @@ class FileTab(QWidget):
         layout.addWidget(self.canvas, stretch=1)
         self.canvas.draw_idle()
 
-    #placeholder before visualize clicked
     def _draw_placeholder(self):
+        """Draw a centred "Load data and click Visualize" message."""
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.text(0.5, 0.5, "Load data and click Visualize",
@@ -855,8 +935,14 @@ class FileTab(QWidget):
                 color="#9aa0a6" if self._is_dark_mode else "#5f6368")
         ax.axis("off")
 
-    # handle changing graph types
     def _on_graph_type_changed(self, graph_type: str):
+        """Show / hide sub-controls and manage animation state on type switch.
+
+        Controls visibility of: epoch inputs, sensor dropdown, topomap
+        time fields, topomap mode selector, animation controls, and
+        the events checkbox.  Also restores the previous channel
+        selection when returning to Time Series or Joint Maps.
+        """
         supports_events = graph_type in ("ErrP Time Series", "Joint Maps")
         self.events_checkbox_container.setVisible(supports_events)
 
@@ -950,6 +1036,7 @@ class FileTab(QWidget):
         self._last_graph_type = graph_type
 
     def _set_epoch_field_style(self, disabled: bool):
+        """Apply greyed-out or active styling to the epoch start/end fields."""
         if disabled:
             if self._is_dark_mode:
                 s = "QLineEdit { background: #2d2d2d; color: #5f6368; border: 1px solid #3c4043; border-radius: 4px; }"
@@ -974,6 +1061,7 @@ class FileTab(QWidget):
     # ---- Animated topomap helpers ----
 
     def _on_topo_mode_changed(self, mode: str):
+        """Toggle between Static and Animated sub-controls."""
         is_animated = mode == "Animated"
         self.topo_times_container.setVisible(not is_animated)
         self.anim_controls_container.setVisible(is_animated)
@@ -982,6 +1070,7 @@ class FileTab(QWidget):
         self.mark_needs_update()
 
     def _setup_animated_topomap(self, evoked, theme):
+        """Initialise the animated topomap: render frame 0, configure slider range."""
         self._stop_animation()
         self._anim_evoked = evoked
         self._anim_theme = theme
@@ -1001,6 +1090,7 @@ class FileTab(QWidget):
         self._update_anim_time_label(0)
 
     def _on_anim_slider_changed(self, value):
+        """Redraw the topomap at the sample index given by *value*."""
         if self._anim_evoked is None:
             return
         time = self._anim_evoked.times[value]
@@ -1013,11 +1103,13 @@ class FileTab(QWidget):
         self.canvas.draw_idle()
 
     def _update_anim_time_label(self, slider_value):
+        """Format the current time in ms and display it beside the slider."""
         if self._anim_evoked is not None and slider_value < len(self._anim_evoked.times):
             time_ms = self._anim_evoked.times[slider_value] * 1000
             self.anim_time_label.setText(f"{time_ms:.1f} ms")
 
     def _toggle_animation(self):
+        """Play ↔ Pause toggle for the animated topomap."""
         if self._anim_evoked is None:
             return
         if self._anim_playing:
@@ -1026,6 +1118,7 @@ class FileTab(QWidget):
             self._start_animation()
 
     def _start_animation(self):
+        """Start the QTimer that advances the slider every 50 ms."""
         if self._anim_evoked is None:
             return
         self._anim_playing = True
@@ -1033,15 +1126,18 @@ class FileTab(QWidget):
         self._anim_timer.start(50)
 
     def _pause_animation(self):
+        """Stop the timer and restore the Play button label."""
         self._anim_playing = False
         self.anim_play_btn.setText("▶  Play")
         self._anim_timer.stop()
 
     def _stop_animation(self):
+        """Pause playback and discard the cached evoked data."""
         self._pause_animation()
         self._anim_evoked = None
 
     def _on_anim_tick(self):
+        """Timer callback: advance the slider by a speed-dependent step, looping at the end."""
         if self._anim_evoked is None:
             self._pause_animation()
             return
@@ -1058,8 +1154,8 @@ class FileTab(QWidget):
             new_val = 0
         self.anim_slider.setValue(new_val)
 
-    # time parser for topo maps
     def _parse_topomap_times(self) -> List[float]:
+        """Read the three topomap-time text fields, falling back to 0.1 / 0.2 / 0.3 s."""
         defaults = [0.1, 0.2, 0.3]
         result = []
         for i, w in enumerate([self.topo_time_1, self.topo_time_2, self.topo_time_3]):
@@ -1073,8 +1169,8 @@ class FileTab(QWidget):
                 return defaults
         return result if result else defaults
 
-    # handle visualize btn state
     def mark_needs_update(self):
+        """Highlight the Visualize button to signal that options have changed."""
         if self._is_dark_mode:
             self.visualize_btn.setStyleSheet(
                 "QPushButton { background: #8ab4f8; border: 1px solid #8ab4f8; border-radius: 4px;"
@@ -1091,6 +1187,7 @@ class FileTab(QWidget):
             )
 
     def reset_visualize_button(self):
+        """Return the Visualize button to its neutral (non-highlighted) style."""
         if self._is_dark_mode:
             self.visualize_btn.setStyleSheet(
                 "QPushButton { background: #202124; border: 1px solid #5f6368; border-radius: 4px;"
@@ -1106,9 +1203,16 @@ class FileTab(QWidget):
                 "QPushButton:pressed { background: #e8f0fe; }"
             )
 
-    # Global theme
     def apply_theme(self, is_dark: bool):
-        """Called by FileWindow when the global darkmode toggle changes."""
+        """Re-style every widget in this tab for light or dark mode.
+
+        Called by :meth:`FileWindow._on_dark_mode_toggled` whenever the
+        global toggle changes.  Updates the graph frame, options box,
+        all ``QLineEdit``/``QComboBox``/``QLabel``/``QCheckBox``
+        children, the animation controls, and the embedded Matplotlib
+        figure (either by redrawing the current animation frame or by
+        applying ``_apply_mpl_theme`` to a static figure).
+        """
         self._is_dark_mode = is_dark
 
         # Graph frame border
@@ -1225,6 +1329,7 @@ class FileTab(QWidget):
         self.reset_visualize_button()
 
     def _apply_mpl_theme(self, fig: Figure):
+        """Apply the current light/dark palette to a static Matplotlib figure."""
         if fig is None:
             return
         if self._is_dark_mode:
@@ -1245,8 +1350,28 @@ class FileTab(QWidget):
             for spine in ax.spines.values():
                 spine.set_color(grid)
 
-# Owns FileTabs and bottom bar
 class FileWindow(QMainWindow):
+    """Top-level application window for the ErrP Visualizer.
+
+    Manages the global layout:
+
+    * **Top bar** — app title, "Record EEG" button, "Help" button,
+      dark-mode toggle.
+    * **Tab area** — a ``QTabWidget`` holding one :class:`FileTab` per
+      loaded file.  Shows a placeholder label when empty.
+    * **Bottom bar** — drag-and-drop zone (:class:`FileDropFrame`),
+      "Browse" / "Clear All" buttons, "Download Graph" button, and a
+      status label with the count/names of open files.
+
+    File lifecycle: paths are validated via :class:`FileValidator`,
+    ``.csv`` files are auto-converted to ``.set`` via
+    :meth:`convert_ganglion_csv_to_set`, and duplicate paths are
+    silently skipped.
+
+    Parameters:
+        file_path (str | None): Optional path to open on launch.
+    """
+
     def __init__(self, file_path: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("ErrP Visualizer")
@@ -1324,10 +1449,12 @@ class FileWindow(QMainWindow):
         self.outer.addLayout(bar)
 
     def _open_help(self):
+        """Show the modal :class:`HelpDialog`."""
         dlg = HelpDialog(is_dark=self.is_dark_mode, parent=self)
         dlg.exec_()
 
     def _open_live_recording(self):
+        """Launch the Flanker-task recording dialog and auto-import the result."""
         dlg = FlankerWindow(
             is_dark=self.is_dark_mode,
             output_dir=os.path.expanduser("~"),
@@ -1337,6 +1464,7 @@ class FileWindow(QMainWindow):
         dlg.exec_()
 
     def _style_help_btn(self, dark: bool):
+        """Apply light or dark stylesheet to the Help button."""
         if dark:
             self.help_btn.setStyleSheet(
                 "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
@@ -1353,6 +1481,7 @@ class FileWindow(QMainWindow):
             )
 
     def _style_record_eeg_btn(self, dark: bool):
+        """Apply light or dark stylesheet to the Record EEG button."""
         if dark:
             self.record_eeg_btn.setStyleSheet(
                 "QPushButton { background: #2d2d2d; color: #f28b82; border: 1px solid #f28b82;"
@@ -1481,6 +1610,7 @@ class FileWindow(QMainWindow):
 
 
     def _browse_files(self):
+        """Open a native file dialog filtered to ``.set`` / ``.csv``."""
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Select .set or .csv file(s)",
@@ -1519,9 +1649,13 @@ class FileWindow(QMainWindow):
 
 
     def add_files(self, paths: List[str]):
-        """
-        Add one tab per new file, loading is lazy.
-        Validates files before loading, then automatically converts .csv files to .set format.
+        """Validate, optionally convert, and open one tab per new file.
+
+        Each path goes through :class:`FileValidator`.  ``.csv`` files
+        are auto-converted to ``.set`` via
+        :meth:`convert_ganglion_csv_to_set`.  Duplicate paths (already
+        open) are silently skipped.  The first newly added tab is
+        activated.
         """
         added = []
         for p in paths:
@@ -1569,18 +1703,26 @@ class FileWindow(QMainWindow):
             self._update_files_label()
 
     def convert_ganglion_csv_to_set(self, csv_path: str) -> str:
-        """
-        Convert Ganglion CSV to EEGLAB .set format.
- 
-        If the CSV contains event markers (col 14), the data is epoched around
-        stimulus onset events (markers 1 and 2) using a -200ms to +800ms window.
-        This gives a 1-second epoch that captures both the ERN (50-150ms) and
-        Pe (200-400ms) components of the ErrP.
- 
-        If no markers are present (e.g. a file from the internet), the full
-        recording is saved as continuous data instead.
- 
-        Returns: Path to the converted .set file
+        """Convert an OpenBCI Ganglion ``.csv`` to EEGLAB ``.set`` format.
+
+        If the CSV contains event markers in column 14 (BrainFlow
+        layout), the data is epoched around stimulus-onset events
+        (markers 1 = congruent, 2 = incongruent) using a −200 ms to
+        +800 ms window — a 1-second epoch that captures both the ERN
+        (50–150 ms) and Pe (200–400 ms) ErrP components.
+
+        If no usable markers are found (fewer than 2 stimulus events),
+        the full recording is saved as continuous (``trials=1``) data.
+
+        Hardcoded for the 4-channel Ganglion at 200 Hz with approximate
+        scalp positions for TP9, AF7, AF8, TP10.
+
+        Parameters:
+            csv_path (str): Path to the source ``.csv`` file.
+
+        Returns:
+            str: Path to the newly created ``*_converted.set`` file
+            (same directory as the input).
         """
         import pandas as pd
         from scipy.io import savemat
@@ -1731,6 +1873,7 @@ class FileWindow(QMainWindow):
         return output_path
 
     def _close_tab(self, index: int):
+        """Remove a single tab and untrack its file path."""
         tab: FileTab = self.tab_widget.widget(index)
         if tab and tab.filepath in self._open_paths:
             self._open_paths.remove(tab.filepath)
@@ -1739,17 +1882,20 @@ class FileWindow(QMainWindow):
         self._update_files_label()
 
     def _clear_all_tabs(self):
+        """Close every tab and reset the tracked-paths list."""
         self.tab_widget.clear()
         self._open_paths.clear()
         self._update_empty_state()
         self._update_files_label()
 
     def _update_empty_state(self):
+        """Show the tab widget or the "no files" placeholder."""
         has_tabs = self.tab_widget.count() > 0
         self.tab_widget.setVisible(has_tabs)
         self._empty_label.setVisible(not has_tabs)
 
     def _update_files_label(self):
+        """Refresh the bottom-bar status text with the count and names of open files."""
         n = self.tab_widget.count()
         if n == 0:
             self.files_label.setText("No files loaded")
@@ -1763,6 +1909,7 @@ class FileWindow(QMainWindow):
             self.files_label.setText(f"{n} files open: {preview}")
 
     def _on_dark_mode_toggled(self, state: int):
+        """Handle the dark-mode toggle: re-theme the window and every open tab."""
         app = QApplication.instance()
         if app is None:
             return
@@ -1782,6 +1929,7 @@ class FileWindow(QMainWindow):
             tab.apply_theme(self.is_dark_mode)
 
     def _apply_window_light_styles(self):
+        """Set light-mode stylesheets on all window-level widgets."""
         self.dark_mode_toggle.set_dark_mode(False)
         self.drop_zone.set_dark_mode(False)
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
@@ -1808,6 +1956,7 @@ class FileWindow(QMainWindow):
         self.download_btn.setStyleSheet(light_btn_style)
 
     def _apply_window_dark_styles(self):
+        """Set dark-mode stylesheets on all window-level widgets."""
         self.dark_mode_toggle.set_dark_mode(True)
         self.drop_zone.set_dark_mode(True)
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=True))
@@ -1834,6 +1983,7 @@ class FileWindow(QMainWindow):
         self.download_btn.setStyleSheet(dark_btn_style)
 
     def _style_clear_btn(self, dark: bool):
+        """Apply light or dark stylesheet to the "Clear All" button."""
         if dark:
             self.clear_btn.setStyleSheet(
                 "QPushButton { background: #202124; border: 1px solid #f28b82; border-radius: 4px;"
@@ -1849,6 +1999,7 @@ class FileWindow(QMainWindow):
 
     @staticmethod
     def _tab_widget_style(dark: bool) -> str:
+        """Return the ``QTabWidget`` / ``QTabBar`` stylesheet for the given theme."""
         if dark:
             return (
                 "QTabWidget::pane { border: 1px solid #3c4043; background: #1e1e1e; border-radius: 4px; }"

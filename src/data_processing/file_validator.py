@@ -1,6 +1,28 @@
 """
-File validation and security module for EEG data files (.set and .csv)
-Provides comprehensive validation before loading files for visualization.
+Security-aware validation for EEG data files before loading.
+
+Every file passes through :func:`validate_and_check_file` (or the
+lower-level :meth:`FileValidator.validate_file`) before the data-loader
+ever reads it.  The checks are layered so that cheap / fast tests run
+first and expensive I/O is deferred:
+
+1. **Path security** — reject traversal attacks, null bytes, and
+   unreadable paths.
+2. **Extension whitelist** — only ``.set`` and ``.csv`` are accepted.
+3. **File size** — enforce a configurable upper bound (default 500 MB).
+4. **Magic-byte signature** — confirm the binary header matches the
+   expected format (MATLAB / HDF5 for ``.set``; valid UTF-8 / Latin-1
+   for ``.csv``).
+5. **Format structure** — for ``.set``: required EEGLAB fields
+   (``nbchan``, ``pnts``, ``srate``) and sane value ranges.  For
+   ``.csv``: consistent column counts, minimum column requirements.
+6. **Data integrity** — sample numeric values to flag NaN / Inf or
+   unusually large amplitudes.
+
+All validation failures raise :class:`FileValidationError`.  The
+convenience wrapper :func:`validate_and_check_file` catches exceptions
+and returns a simple ``(bool, Optional[str])`` tuple for callers that
+prefer not to handle exceptions.
 """
 
 import os
@@ -42,26 +64,37 @@ UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
 
 
 class FileValidationError(Exception):
-    """Raised when file validation fails."""
+    """Raised when any file validation check fails.
+
+    The message describes which check failed and, where possible,
+    includes the problematic value so the user can correct it.
+    """
     pass
 
 
 class FileValidator:
-    """
-    Comprehensive file validator for EEG data files.
-    Validates format, size, integrity, and data ranges.
+    """Stateless validator for ``.set`` and ``.csv`` EEG data files.
+
+    All methods are ``@staticmethod``; no instance state is kept.  The
+    intended entry point is :meth:`validate_file`, which chains every
+    check in order and raises :class:`FileValidationError` on the first
+    failure.  Individual check methods are also public so callers can
+    run a subset if needed.
     """
 
     @staticmethod
     def validate_file_path(file_path: str) -> None:
-        """
-        Validate file path for security issues.
-        
-        Args:
-            file_path: Path to the file
-            
+        """Check that *file_path* is a safe, existing, readable file.
+
+        Guards against path-traversal (``..``), null-byte injection,
+        control characters, and non-file paths (directories, symlinks
+        to missing targets, etc.).
+
+        Parameters:
+            file_path (str): Absolute or relative filesystem path.
+
         Raises:
-            FileValidationError: If path validation fails
+            FileValidationError: On any path-safety or existence check.
         """
         path = Path(file_path)
         filename = path.name
@@ -92,17 +125,17 @@ class FileValidator:
 
     @staticmethod
     def validate_file_extension(file_path: str) -> str:
-        """
-        Validate file extension.
-        
-        Args:
-            file_path: Path to the file
-            
+        """Verify that the file extension is in :data:`ALLOWED_EXTENSIONS`.
+
+        Parameters:
+            file_path (str): Path to the file.
+
         Returns:
-            File extension (lowercase)
-            
+            str: Lower-cased extension including the leading dot
+            (e.g. ``".set"``).
+
         Raises:
-            FileValidationError: If extension is invalid
+            FileValidationError: If the extension is not allowed.
         """
         path = Path(file_path)
         ext = path.suffix.lower()
@@ -116,14 +149,13 @@ class FileValidator:
 
     @staticmethod
     def validate_file_size(file_path: str) -> None:
-        """
-        Validate file size is within acceptable limits.
-        
-        Args:
-            file_path: Path to the file
-            
+        """Reject empty files and files larger than :data:`MAX_FILE_SIZE_MB`.
+
+        Parameters:
+            file_path (str): Path to the file.
+
         Raises:
-            FileValidationError: If file is too large
+            FileValidationError: If size is 0 or exceeds the limit.
         """
         path = Path(file_path)
         file_size = path.stat().st_size
@@ -139,15 +171,17 @@ class FileValidator:
 
     @staticmethod
     def validate_file_signature(file_path: str, file_type: str) -> None:
-        """
-        Validate file signature (magic bytes) to ensure correct format.
-        
-        Args:
-            file_path: Path to the file
-            file_type: 'set' or 'csv'
-            
+        """Compare the first 8 bytes against known magic-byte signatures.
+
+        * ``.set`` — must start with ``MATLAB`` or ``\\x89HDF``.
+        * ``.csv`` — must decode as valid UTF-8 or Latin-1 text.
+
+        Parameters:
+            file_path (str): Path to the file.
+            file_type (str): ``"set"`` or ``"csv"``.
+
         Raises:
-            FileValidationError: If file signature is invalid
+            FileValidationError: If the header bytes do not match.
         """
         with open(file_path, 'rb') as f:
             header = f.read(8)
@@ -176,17 +210,21 @@ class FileValidator:
 
     @staticmethod
     def validate_csv_format(file_path: str) -> Tuple[List[str], int]:
-        """
-        Validate CSV file format and structure.
-        
-        Args:
-            file_path: Path to CSV file
-            
+        """Validate CSV structure: headers, column consistency, and row count.
+
+        Comment lines starting with ``%`` (common in OpenBCI exports) are
+        skipped.  Up to 100 000 data rows are inspected; column-count
+        mismatches beyond a small tolerance trigger an error.
+
+        Parameters:
+            file_path (str): Path to the CSV file.
+
         Returns:
-            Tuple of (headers, number_of_rows)
-            
+            tuple[list[str], int]: ``(headers, data_row_count)``.
+
         Raises:
-            FileValidationError: If CSV format is invalid
+            FileValidationError: If the CSV cannot be parsed, has no
+            headers, no data rows, or too many inconsistent rows.
         """
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
@@ -266,16 +304,19 @@ class FileValidator:
         headers: List[str],
         sample_rows: int = 100
     ) -> None:
-        """
-        Validate CSV data integrity and ranges.
-        
-        Args:
-            file_path: Path to CSV file
-            headers: List of column headers
-            sample_rows: Number of rows to sample for validation
-            
+        """Spot-check numeric values in the first *sample_rows* data rows.
+
+        For each column that appears numeric, verifies that values are
+        finite (no NaN / Inf) and warns on unusually large magnitudes
+        (> 10 000) that may indicate unit or scaling problems.
+
+        Parameters:
+            file_path (str): Path to the CSV file.
+            headers (list[str]): Column headers (used for error messages).
+            sample_rows (int): Number of leading rows to inspect.
+
         Raises:
-            FileValidationError: If data integrity checks fail
+            FileValidationError: If a NaN or Inf value is found.
         """
         numeric_columns = []
         
@@ -315,14 +356,21 @@ class FileValidator:
 
     @staticmethod
     def validate_set_file_structure(set_file_path: str) -> None:
-        """
-        Validate .set file structure and required fields.
-        
-        Args:
-            set_file_path: Path to .set file
-            
+        """Load the ``.set`` MAT file and verify EEGLAB-required fields.
+
+        Checks that ``nbchan``, ``pnts``, and ``srate`` exist and fall
+        within the ranges defined by the module-level constants
+        (``EEG_CHANNELS_MIN``/``MAX``, ``EEG_SFREQ_MIN_HZ``/``MAX``).
+
+        Supports both nested (``mat['EEG'].nbchan``) and flattened
+        (``mat['nbchan']``) EEGLAB export layouts.
+
+        Parameters:
+            set_file_path (str): Path to the ``.set`` file.
+
         Raises:
-            FileValidationError: If structure validation fails
+            FileValidationError: If required fields are missing or
+            out of range.
         """
         try:
             from scipy.io import loadmat
@@ -385,15 +433,21 @@ class FileValidator:
 
     @staticmethod
     def validate_set_data_integrity(set_file_path: str, sample_size: int = 1000) -> None:
-        """
-        Validate .set file data integrity and ranges.
-        
-        Args:
-            set_file_path: Path to .set file
-            sample_size: Number of samples to check
-            
+        """Spot-check the ``data`` field in a ``.set`` file for NaN / Inf.
+
+        If data is stored inline as a NumPy array, a random sample of
+        *sample_size* values is drawn and tested.  If data is an
+        external file reference (string path to a ``.fdt``), the
+        method verifies that the file exists and is non-empty.
+
+        Parameters:
+            set_file_path (str): Path to the ``.set`` file.
+            sample_size (int): Number of random elements to check when
+                data is inline.
+
         Raises:
-            FileValidationError: If data validation fails
+            FileValidationError: If the ``data`` field is missing or
+            the external reference cannot be resolved.
         """
         try:
             from scipy.io import loadmat
@@ -451,17 +505,24 @@ class FileValidator:
 
     @staticmethod
     def validate_file(file_path: str) -> Tuple[str, dict]:
-        """
-        Comprehensive file validation.
-        
-        Args:
-            file_path: Path to the file
-            
+        """Run the full validation pipeline on a single file.
+
+        Chains every check method in order (path → extension → size →
+        signature → format-specific structure → data integrity).
+        Stops on the first failure.
+
+        Parameters:
+            file_path (str): Path to the file to validate.
+
         Returns:
-            Tuple of (file_type, validation_info dict)
-            
+            tuple[str, dict]: ``(file_type, validation_info)`` where
+            *file_type* is ``"set"`` or ``"csv"`` and *validation_info*
+            contains keys like ``file_path``, ``file_type``,
+            ``file_size_bytes``, and (for CSVs) ``csv_headers`` /
+            ``csv_rows``.
+
         Raises:
-            FileValidationError: If any validation fails
+            FileValidationError: If any validation step fails.
         """
         validation_info = {
             'file_path': file_path,
@@ -510,15 +571,17 @@ class FileValidator:
 
 
 def validate_and_check_file(file_path: str) -> Tuple[bool, Optional[str]]:
-    """
-    User-friendly wrapper for file validation.
-    
-    Args:
-        file_path: Path to the file
-        
+    """Convenience wrapper that never raises — returns a bool result.
+
+    Calls :meth:`FileValidator.validate_file` internally and catches
+    all exceptions, converting them to a human-readable error string.
+
+    Parameters:
+        file_path (str): Path to the file.
+
     Returns:
-        Tuple of (is_valid, error_message)
-        error_message is None if valid, otherwise contains error text
+        tuple[bool, str | None]: ``(True, None)`` on success, or
+        ``(False, error_message)`` on failure.
     """
     try:
         FileValidator.validate_file(file_path)
