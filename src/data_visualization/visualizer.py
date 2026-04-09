@@ -1,5 +1,23 @@
 """
-Visualization functions for EEG data
+Matplotlib-based plotting functions for EEG data.
+
+All public functions accept a *theme* parameter (``"light"`` or
+``"dark"``) and return a :class:`matplotlib.figure.Figure` that can be
+embedded in a Qt canvas via ``FigureCanvasQTAgg``.  When *show* is
+``True`` the figure is also displayed interactively with
+``plt.show()``.
+
+Plot types
+----------
+* :func:`plot_epochs` — butterfly overlay of every epoch/channel trace.
+* :func:`plot_evoked` — averaged ERP waveform with optional ERN / Pe
+  event-window overlays.
+* :func:`plot_topomap` — static scalp-voltage maps at up to three
+  user-chosen time points.
+* :func:`plot_joint` — combined time-series (top) and topomap row
+  (bottom).
+* :func:`plot_topomap_frame` — single-frame topomap used by the
+  animated topomap feature in the GUI.
 """
 
 import logging
@@ -12,8 +30,17 @@ from scipy.interpolate import griddata
 logger = logging.getLogger(__name__)
 
 def _apply_mpl_theme(fig, axes, theme: str = "light"):
-    """
-    Apply a light or dark theme to a Matplotlib figure used by the GUI.
+    """Apply the app's light or dark colour palette to a Matplotlib figure.
+
+    Updates the figure background, suptitle colour, and every supplied
+    axes' background, tick / label / spine colours, and grid style.
+    This is called once when a figure is first created and again whenever
+    the user toggles dark mode.
+
+    Parameters:
+        fig (matplotlib.figure.Figure): Target figure.
+        axes: A single ``Axes`` or an iterable of ``Axes`` objects.
+        theme (str): ``"light"`` or ``"dark"``.
     """
     if isinstance(axes, (list, tuple, np.ndarray)):
         axes_list = list(axes)
@@ -48,8 +75,23 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
 
 
 def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, theme: str = "light"):
-    """
-    Plot all channels for all epochs (butterfly plot).
+    """Butterfly plot: overlay every epoch/channel trace on a single axis.
+
+    Useful for a quick visual inspection of raw epoch quality before
+    averaging.  Each trace is drawn with low alpha so dense regions
+    (consistent activity) appear darker than noisy outliers.
+
+    Parameters:
+        epochs (EpochsData): Epoched dataset.
+        picks (list[int] | None): Channel indices to plot.  ``None``
+            plots all channels.
+        scalings: Unused — kept for API compatibility.
+        title (str | None): Custom axis title.
+        show (bool): If ``True``, call ``plt.show()`` after rendering.
+        theme (str): ``"light"`` or ``"dark"``.
+
+    Returns:
+        matplotlib.figure.Figure
     """
     if picks is None:
         picks = range(len(epochs.ch_names))
@@ -82,8 +124,35 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
                 window_title=None, scalings=None, titles=None,
                 display_events_responses=False, show=True, theme: str = "light",
                 selected_sensors=None):
-    """
-    Plot evoked response (ERP/ErrP).
+    """Plot the averaged ERP waveform ("ErrP Time Series" in the GUI).
+
+    Each channel is drawn as a separate line.  When
+    *display_events_responses* is ``True``, two shaded bands and
+    hover-activated annotation boxes mark the physiologically relevant
+    windows:
+
+    * **ERN / Ne** (50–150 ms, blue) — the error-related negativity.
+    * **Pe** (200–400 ms, green) — the error positivity.
+
+    Parameters:
+        evoked (EvokedData): Averaged waveform to plot.
+        picks (list[int] | None): Channel indices.  ``None`` = all.
+        spatial_colors (bool): Colour traces by channel position using
+            the *viridis* colourmap.
+        gfp (bool): Overlay the Global Field Power (spatial ``std``).
+        window_title (str | None): Axis title override.
+        scalings: Unused — kept for API compatibility.
+        titles: Unused — kept for API compatibility.
+        display_events_responses (bool): Draw ERN/Pe bands and hover
+            annotations.
+        show (bool): Call ``plt.show()`` after rendering.
+        theme (str): ``"light"`` or ``"dark"``.
+        selected_sensors (list[str] | None): Not used directly here
+            (channel filtering is applied upstream), but accepted for
+            signature consistency with :func:`plot_topomap`.
+
+    Returns:
+        matplotlib.figure.Figure
     """
     if picks is None:
         picks = range(len(evoked.ch_names))
@@ -211,8 +280,32 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
 def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
                  cmap='RdBu_r', sensors=True, contours=6, show=True, theme: str = "light",
                  selected_sensors=None):
-    """
-    Plot topographic maps at specific time points.
+    """Plot static scalp-voltage maps at one or more time points.
+
+    Each time point produces a filled-contour interpolation of the
+    voltage across all electrode positions (cubic ``griddata``), drawn
+    inside a head outline with a nose marker.
+
+    Falls back to :func:`plot_evoked` if no channel locations are
+    available.
+
+    Parameters:
+        evoked (EvokedData): Averaged waveform.
+        times (float | list[float]): Time point(s) in seconds at which
+            to draw the map.
+        ch_type (str): Unused — kept for API compatibility.
+        colorbar (bool): Append a colour bar to the right of the maps.
+        cmap (str): Matplotlib colourmap name.
+        sensors (bool): Draw electrode dots on the map.
+        contours (int): Number of contour levels.
+        show (bool): Call ``plt.show()`` after rendering.
+        theme (str): ``"light"`` or ``"dark"``.
+        selected_sensors (list[str] | None): Passed through for
+            signature consistency; the topomap always uses all channels
+            for interpolation.
+
+    Returns:
+        matplotlib.figure.Figure
     """
     if evoked.ch_locs is None:
         logger.warning("No channel locations available; cannot create topomap. Showing simple time-series plot instead.")
@@ -261,11 +354,36 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
 def plot_joint(evoked, times=None, title='', ts_args=None,
                topomap_args=None, display_events_responses=False,
                show=True, theme: str = "light", selected_sensors=None):
-    """
-    Plot evoked response with topomaps at specific time points.
+    """Combined time-series and topomap figure ("Joint Maps" in the GUI).
 
-    Times that fall outside the evoked data range are rendered as a clearly
-    labelled "Out of range" placeholder.
+    The figure has a 2-row ``GridSpec``:
+
+    * **Top row** — averaged ERP waveform (same content as
+      :func:`plot_evoked`) with vertical markers at each topomap time.
+    * **Bottom row** — one topomap per requested time point.  Times
+      outside the epoch range are rendered as hatched "Out of range"
+      placeholders via :func:`_plot_out_of_range`.
+
+    When *times* is ``None``, up to three peaks are auto-detected from
+    the Global Field Power using ``scipy.signal.find_peaks``.
+
+    Parameters:
+        evoked (EvokedData): Averaged waveform.
+        times (list[float] | None): Topomap time points in seconds.
+        title (str): Axis title for the time-series row.
+        ts_args: Unused — kept for API compatibility.
+        topomap_args: Unused — kept for API compatibility.
+        display_events_responses (bool): Draw ERN / Pe overlays on the
+            time-series row (same logic as :func:`plot_evoked`).
+        show (bool): Call ``plt.show()`` after rendering.
+        theme (str): ``"light"`` or ``"dark"``.
+        selected_sensors (list[str] | None): If provided (and not
+            ``["All Channels"]``), only these channels are drawn in
+            the time-series row.  The topomap row always uses all
+            channels.
+
+    Returns:
+        matplotlib.figure.Figure
     """
     if times is None:
         gfp = np.std(evoked.data, axis=0)
@@ -453,10 +571,17 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
 # ---------------------------------------------------------------------------
 
 def _plot_out_of_range(ax, time_ms: float, t_min_ms: float, t_max_ms: float):
-    """
-    Render a clearly labelled placeholder in *ax* for a topomap time that falls
-    outside the current epoch window.  Uses a light-grey hatched box so it is
-    visually distinct from real topomaps at a glance.
+    """Draw a hatched "Out of range" placeholder in a topomap cell.
+
+    Used by :func:`plot_joint` when a user-specified topomap time falls
+    outside the epoch window.  The placeholder shows the requested time
+    and the valid range so the user knows what values to enter.
+
+    Parameters:
+        ax (matplotlib.axes.Axes): Target axes (will be cleared).
+        time_ms (float): The out-of-range time that was requested, in ms.
+        t_min_ms (float): Start of the valid epoch window in ms.
+        t_max_ms (float): End of the valid epoch window in ms.
     """
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -509,7 +634,22 @@ def _plot_out_of_range(ax, time_ms: float, t_min_ms: float, t_max_ms: float):
 # ---------------------------------------------------------------------------
 
 def _get_channel_positions(ch_locs, ch_names):
-    """Extract 2D channel positions from ch_locs."""
+    """Extract 2-D scalp positions from EEGLAB ``chanlocs``.
+
+    Two coordinate systems are supported:
+
+    * **Cartesian** — each element has ``.X`` and ``.Y`` attributes.
+    * **Polar** — each element has ``.theta`` (degrees) and ``.radius``
+      attributes, converted via ``x = r·cos(θ)``, ``y = r·sin(θ)``.
+
+    Parameters:
+        ch_locs: EEGLAB ``chanlocs`` struct array (indexable sequence).
+        ch_names (list[str]): Channel labels (only used for length).
+
+    Returns:
+        np.ndarray | None: Array of shape ``(n_channels, 2)`` with
+        ``[x, y]`` rows, or ``None`` if *ch_locs* is ``None``.
+    """
     if ch_locs is None:
         return None
 
@@ -530,8 +670,22 @@ def _get_channel_positions(ch_locs, ch_names):
 
 def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
                         sensors=True, contours=6):
-    """
-    Plot a single topomap.
+    """Render one filled-contour scalp map onto an existing axes.
+
+    The voltage values in *data* are interpolated onto a 100×100 grid
+    using ``scipy.interpolate.griddata`` (cubic method), then drawn
+    with ``contourf``.  A head-outline circle and nose wedge are
+    overlaid for anatomical reference.
+
+    Parameters:
+        data (np.ndarray): 1-D array of voltages (µV), one per channel.
+        pos (np.ndarray): Electrode positions with shape
+            ``(n_channels, 2)``.
+        ax (matplotlib.axes.Axes): Target axes.
+        title (str): Axes title (usually the time point).
+        cmap (str): Matplotlib colourmap name.
+        sensors (bool): Draw black dots at electrode positions.
+        contours (int): Number of contour fill levels.
     """
     xi = np.linspace(pos[:, 0].min() - 0.1, pos[:, 0].max() + 0.1, 100)
     yi = np.linspace(pos[:, 1].min() - 0.1, pos[:, 1].max() + 0.1, 100)
@@ -565,12 +719,35 @@ def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
 def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
                        sensors=True, contours=6, theme='light',
                        global_vmax=None):
-    """
-    Render a single topomap at *time* onto *fig*.
+    """Render a single animated-topomap frame onto an existing figure.
 
-    If *fig* is None a new figure is created; otherwise all axes are cleared
-    and redrawn.  *global_vmax* keeps the colour scale fixed across frames
-    (pass ``np.abs(evoked.data).max() * 1e6`` computed once up-front).
+    Designed to be called repeatedly by the GUI's ``QTimer`` loop.  On
+    each call the figure is cleared and redrawn at the new *time*.
+    Reusing the same ``Figure`` object avoids the overhead of creating
+    and destroying canvases every frame.
+
+    The colour scale is symmetrically clamped to ±\ *global_vmax* so
+    the palette stays fixed across the entire animation, preventing
+    misleading colour flicker between frames.  Compute it once before
+    the first frame with ``np.abs(evoked.data).max() * 1e6``.
+
+    Layout is manually controlled via ``subplots_adjust`` and
+    ``set_anchor('C')`` to keep the round topomap centred in the
+    canvas even after the colour-bar steals horizontal space.
+
+    Parameters:
+        evoked (EvokedData): Averaged waveform.
+        time (float): Time point in seconds.
+        fig (matplotlib.figure.Figure | None): Figure to reuse.
+            A new one is created if ``None``.
+        cmap (str): Matplotlib colourmap name.
+        sensors (bool): Draw electrode dots.
+        contours (int): Number of contour fill levels.
+        theme (str): ``"light"`` or ``"dark"``.
+        global_vmax (float | None): Symmetric colour-scale limit in µV.
+
+    Returns:
+        matplotlib.figure.Figure: The (possibly newly created) figure.
     """
     if evoked.ch_locs is None:
         logger.warning("No channel locations; cannot render animated topomap.")
