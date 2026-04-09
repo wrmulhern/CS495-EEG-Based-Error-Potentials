@@ -1,11 +1,30 @@
 """
-flanker_window.py
-Native Flanker Task with simultaneous Ganglion EEG recording.
+Native Flanker Task dialog with simultaneous OpenBCI Ganglion EEG recording.
 
-Opens from FileWindow when the user clicks "Record EEG".
-On completion it saves a CSV,
-auto converts it to .set (averaging trials with the event occuring at 0ms), and signals the parent to open it as a new tab. 
-From there, user presses 'visualize' to see the epoched ERPs.
+Opened from :class:`~src.gui.file_window.FileWindow` when the user
+clicks **Record EEG**.  The dialog has four pages managed by a
+``QStackedWidget``:
+
+1. **Setup** — serial-port selector, trial-count spinner, output
+   directory display, and a "Connect & Start" button.
+2. **Intro** — task instructions explaining the Flanker paradigm.
+3. **Task** — full-screen stimulus presentation driven by a
+   single-shot ``QTimer`` state machine that cycles through the
+   phases *fixation → stimulus → response → feedback → ITI* for
+   each trial.  Arrow-key responses are captured via
+   ``keyPressEvent``.  Event markers (congruent / incongruent /
+   correct / error / no-response) are injected into the Brainflow
+   stream in real time.
+4. **Done** — accuracy / RT summary and a button to open the saved
+   file in the visualiser.
+
+On completion the recorder saves a ``.csv`` and emits
+:pyqt:`recording_finished(str)` with the file path.  The parent
+:class:`~src.gui.file_window.FileWindow` auto-converts the CSV to
+``.set`` and opens it as a new tab.
+
+If ``brainflow`` is not installed the task still runs (useful for
+UI testing) but no EEG is recorded.
 """
 
 import os
@@ -30,54 +49,63 @@ from src.data_processing.eeg_recorder import (
 
 logger = logging.getLogger(__name__)
 
-# The flanker stimuli, with their congruency and correct response direction
-# User will be asked to respond to the CENTER arrow only, ignoring the flankers. If user is incorrect, 
-# should trigger a perceived error and thus an ERN in the EEG.
+#: The four Flanker stimulus variants.  Each tuple is
+#: ``(display_string, is_congruent, correct_direction)``.
+#: The participant must respond to the **centre** arrow only;
+#: incorrect responses are expected to elicit an ERN in the EEG.
 STIMULI = [
-    # (display string,   congruent, correct_direction)
     ("< < < < <",  True,  "left"),
     ("> > > > >",  True,  "right"),
     ("< < > < <",  False, "right"),
     ("> > < > >",  False, "left"),
 ]
 
-# Timing (milliseconds)
-FIXATION_MS   = 500
-STIMULUS_MS   = 200
-RESPONSE_MS   = 1000    # window after stimulus disappears
-FEEDBACK_MS   = 400
-ITI_MS        = 800     # inter-trial interval (blank)
+FIXATION_MS   = 500     #: Duration of the fixation cross (ms).
+STIMULUS_MS   = 200     #: Duration the arrow string is visible (ms).
+RESPONSE_MS   = 1000    #: Response window after stimulus offset (ms).
+FEEDBACK_MS   = 400     #: Duration of ✓ / ✗ / "Too slow!" feedback (ms).
+ITI_MS        = 800     #: Blank inter-trial interval (ms).
 
 
-#
-# Worker signal bridge (so background threads can talk to Qt)
-#
 class _Signals(QObject):
-    finished = pyqtSignal(str)   # emits CSV path when done
-    error    = pyqtSignal(str)   # emits error message
+    """Thread-safe signal bridge so background workers can update the Qt UI.
 
-
-#
-# FlankerWindow - holds all the UI and logic for running the task and recording EEG.
-#
-class FlankerWindow(QDialog):
+    Attributes:
+        finished(str): Emitted with the CSV path on success, or the
+            sentinel ``"__connected__"`` after initial Ganglion handshake.
+        error(str): Emitted with an error message on failure.
     """
-    Fullscreen dialog that runs the Flanker task and records EEG.
+    finished = pyqtSignal(str)
+    error    = pyqtSignal(str)
 
-    Signals
-    -------
-    recording_finished(str)
-        Emitted with the path to the saved CSV when the task completes.
-        The parent (FileWindow) connects this to add_files().
+
+class FlankerWindow(QDialog):
+    """Modal dialog that runs the Flanker task with optional EEG recording.
+
+    The dialog is a four-page ``QStackedWidget`` (see module docstring
+    for page descriptions).  A single-shot ``QTimer`` drives the trial
+    state machine; arrow-key presses are captured in
+    :meth:`keyPressEvent`.
+
+    Signals:
+        recording_finished(str): Emitted with the path to the saved
+            CSV when the task completes.  The parent
+            :class:`~src.gui.file_window.FileWindow` connects this to
+            :meth:`~src.gui.file_window.FileWindow.add_files`.
+
+    Parameters:
+        is_dark (bool): Current theme state.
+        output_dir (str | None): Directory for saved CSVs (defaults to
+            ``~/``).
+        parent (QWidget | None): Parent widget.
     """
 
     recording_finished = pyqtSignal(str)
 
-    # Pages in the stacked widget
-    _PAGE_SETUP   = 0 # choose which port to look for Ganglion, and how many trials to run
-    _PAGE_INTRO   = 1 # directions for completing the flanker task
-    _PAGE_TASK    = 2 # flanker task
-    _PAGE_DONE    = 3 # shows stats and file path, with option to open in visualizer
+    _PAGE_SETUP   = 0  #: Port / trial-count configuration.
+    _PAGE_INTRO   = 1  #: Task instructions.
+    _PAGE_TASK    = 2  #: Live stimulus presentation.
+    _PAGE_DONE    = 3  #: Results summary.
 
     def __init__(self, is_dark: bool = False, output_dir: str = None, parent=None):
         super().__init__(parent)
@@ -122,13 +150,8 @@ class FlankerWindow(QDialog):
         self._apply_theme(is_dark)
         self._stack.setCurrentIndex(self._PAGE_SETUP)
 
-    #
-    #
-    # Build each page
-    #
-    #
-
     def _build_setup_page(self) -> QWidget:
+        """Page 0: serial port, trial count, output directory, and start button."""
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(60, 50, 60, 50)
@@ -210,6 +233,7 @@ class FlankerWindow(QDialog):
         return page
 
     def _build_intro_page(self) -> QWidget:
+        """Page 1: Flanker task instructions and a "Begin Task" button."""
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(80, 60, 80, 60)
@@ -259,6 +283,7 @@ class FlankerWindow(QDialog):
         return page
 
     def _build_task_page(self) -> QWidget:
+        """Page 2: progress bar, central stimulus/feedback labels, and abort button."""
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -305,6 +330,7 @@ class FlankerWindow(QDialog):
         return page
 
     def _build_done_page(self) -> QWidget:
+        """Page 3: completion icon, accuracy/RT stats, file path, and open button."""
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(60, 60, 60, 60)
@@ -356,13 +382,8 @@ class FlankerWindow(QDialog):
 
         return page
 
-    #
-    #
-    # Helper functions for page actions
-    #
-    #
-
     def _refresh_ports(self):
+        """Re-populate the serial-port combo from ``EEGRecorder.list_ports()``."""
         self._port_combo.clear()
         ports = EEGRecorder.list_ports()
         if ports:
@@ -371,6 +392,7 @@ class FlankerWindow(QDialog):
             self._port_combo.addItem("COM3")   # sensible default, can be changed for windows users
 
     def _on_setup_start(self):
+        """Validate port, build the trial list, and connect to the Ganglion in a background thread."""
         port = self._port_combo.currentText().strip()
         if not port:
             QMessageBox.warning(self, "No port", "Please select or enter a serial port.")
@@ -402,18 +424,17 @@ class FlankerWindow(QDialog):
 
         threading.Thread(target=_connect, daemon=True).start()
 
-    #
-    #
-    # Trials
-    #
-    #
-
     @staticmethod
     def _build_trial_list(n: int) -> list:
-        """
-        Build a balanced, pseudo- andomised trial list.
-        ~50% congruent, ~50% incongruent.
-        Returns list of dicts with keys: stimulus, congruent, correct_direction.
+        """Build a balanced, pseudo-randomised trial list.
+
+        Repeats the four :data:`STIMULI` variants to reach *n* trials,
+        then shuffles.  Approximately 50 % congruent / 50 % incongruent.
+
+        Returns:
+            list[dict]: Each dict has keys ``stimulus`` (str),
+            ``congruent`` (bool), and ``direction`` (``"left"`` or
+            ``"right"``).
         """
         base = STIMULI * (n // len(STIMULI) + 1)
         random.shuffle(base)
@@ -426,13 +447,8 @@ class FlankerWindow(QDialog):
             })
         return trials
 
-    #
-    #
-    # Task flow helper functions
-    #
-    #
-
     def _begin_task(self):
+        """Switch to the task page and kick off the first trial after a short delay."""
         self._stack.setCurrentIndex(self._PAGE_TASK)
         self._progress.setMaximum(len(self._trials))
         self._progress.setValue(0)
@@ -440,6 +456,7 @@ class FlankerWindow(QDialog):
         QTimer.singleShot(500, self._next_trial)
 
     def _next_trial(self):
+        """Reset per-trial state, show the fixation cross, and start the timer."""
         if self._trial_index >= len(self._trials):
             self._finish_task()
             return
@@ -459,6 +476,7 @@ class FlankerWindow(QDialog):
         self._timer.start(FIXATION_MS)
 
     def _on_timer(self):
+        """Single-shot timer callback: advance through the phase state machine."""
         trial = self._trials[self._trial_index]
 
         if self._phase == "fixation":
@@ -506,6 +524,7 @@ class FlankerWindow(QDialog):
             self._next_trial()
 
     def keyPressEvent(self, event: QKeyEvent):
+        """Capture left / right arrow keys during the response window."""
         if not self._awaiting_response:
             return
 
@@ -516,6 +535,7 @@ class FlankerWindow(QDialog):
             self._handle_response("right")
 
     def _handle_response(self, direction: str):
+        """Score the response, insert an EEG marker, and show feedback."""
         if not self._awaiting_response:
             return
         self._awaiting_response = False
@@ -539,6 +559,7 @@ class FlankerWindow(QDialog):
             self._record_result(trial, "error", self._response_time)
 
     def _record_result(self, trial: dict, outcome: str, rt):
+        """Append a per-trial result dict for the end-of-task summary."""
         self._results.append({
             "trial":     self._trial_index + 1,
             "congruent": trial["congruent"],
@@ -548,6 +569,7 @@ class FlankerWindow(QDialog):
         })
 
     def _abort_task(self):
+        """Confirm, then stop the timer, release the recorder, and close the dialog."""
         reply = QMessageBox.question(
             self, "Abort?",
             "Stop the task and discard this recording?",
@@ -564,13 +586,8 @@ class FlankerWindow(QDialog):
                 self._recorder = None
             self.reject()
  
-    #
-    #
-    # Finish & saving helper functions
-    #
-    #
-
     def _finish_task(self):
+        """Stop the timer and save the EEG data in a background thread."""
         self._timer.stop()
         self._awaiting_response = False
         self._progress.setValue(len(self._trials))
@@ -592,6 +609,7 @@ class FlankerWindow(QDialog):
             self._show_done_page(csv_path=None)
 
     def _on_recording_finished(self, csv_path: str):
+        """Handle the ``_Signals.finished`` signal (connection ack or saved CSV)."""
         if csv_path == "__connected__":
             self._start_btn.setEnabled(True)
             self._start_btn.setText("Connect & Start →")
@@ -602,6 +620,7 @@ class FlankerWindow(QDialog):
         self.recording_finished.emit(csv_path)
 
     def _on_recording_error(self, msg: str):
+        """Show a critical message box and close the dialog on save failure."""
         QMessageBox.critical(
             self, "Save Failed",
             f"Could not save EEG recording:\n\n{msg}"
@@ -609,7 +628,7 @@ class FlankerWindow(QDialog):
         self.reject()
 
     def _show_done_page(self, csv_path):
-        # Compute stats
+        """Compute accuracy / RT stats and switch to the Done page."""
         total   = len(self._results)
         correct = sum(1 for r in self._results if r["outcome"] == "correct")
         errors  = sum(1 for r in self._results if r["outcome"] == "error")
@@ -632,13 +651,8 @@ class FlankerWindow(QDialog):
 
         self._stack.setCurrentIndex(self._PAGE_DONE)
 
-    #
-    #
-    # Themes
-    #
-    #
-
     def _apply_theme(self, dark: bool):
+        """Set global light or dark stylesheet on the dialog and all child widgets."""
         if dark:
             self.setStyleSheet(
                 "QDialog, QWidget { background: #1e1e1e; color: #e8eaed; }"
