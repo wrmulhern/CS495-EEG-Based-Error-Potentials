@@ -11,3 +11,11 @@ __pycache__/
 uv.exe
 uvx.exe
 uvw.exe
+
+# build artifacts
+build/
+dist/
+
+# mac OS files
+.DS_Store
+**/.DS_Store
