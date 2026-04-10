@@ -5,17 +5,12 @@
 # Usage:
 #   uv run pyinstaller ErrPVisualizer.spec
 #
-# This replaces the long --add-binary command line flags and works on
-# both macOS and Windows without hardcoding any paths.
 
 import os
 import sys
 import glob
 
 # ── Locate Brainflow native libraries ────────────────────────────────────────
-# Brainflow ships precompiled .dylib (macOS) or .dll (Windows) files inside
-# its Python package. PyInstaller won't find these automatically so we
-# collect them here and bundle them into the executable.
 
 import brainflow
 brainflow_dir = os.path.dirname(brainflow.__file__)
