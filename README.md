@@ -27,7 +27,7 @@ uv run -m src.main
 
 However, if you would like to create an executable for deployment instead, you can run this command:
 ```bash
-uv run pyinstaller --onefile --noconsole --name (executable_name) src/main.py
+uv run pyinstaller ErrPVisualizer.spec
 ```
 which creates an executable of the application for your operating system
 
