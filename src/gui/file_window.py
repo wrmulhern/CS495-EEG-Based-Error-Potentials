@@ -69,8 +69,7 @@ from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
 from .utils.multi_select import MultiSelectDropdown, MultiSelectItemDelegate
 from .help_dialog import HelpDialog
-from .themes.light_theme import apply_light_theme
-from .themes.dark_theme import apply_dark_theme
+from .themes.theme import apply_theme
 from .themes.colors import get_palette
 from .flanker_window import FlankerWindow
 from src.config import VALIDATION, EXPORT, PLOT
@@ -900,7 +899,7 @@ class FileWindow(QMainWindow):
         self._build_tab_area()  # QTabWidget
         self._build_bottom_bar()  # drag/drop, browse, clear all
 
-        self._apply_window_light_styles()
+        self._apply_window_theme(dark=False)
 
         if file_path:
             self.add_files([file_path])
@@ -1248,25 +1247,13 @@ class FileWindow(QMainWindow):
 
         self.is_dark_mode = bool(state)
 
-        if self.is_dark_mode:
-            apply_dark_theme(app)
-            self._apply_window_dark_styles()
-        else:
-            apply_light_theme(app)
-            self._apply_window_light_styles()
+        apply_theme(app, is_dark=self.is_dark_mode)
+        self._apply_window_theme(dark=self.is_dark_mode)
 
         # Propagate to every open tab
         for i in range(self.tab_widget.count()):
             tab: FileTab = self.tab_widget.widget(i)
             tab.apply_theme(self.is_dark_mode)
-
-    def _apply_window_light_styles(self):
-        """Set light-mode stylesheets on all window-level widgets."""
-        self._apply_window_theme(dark=False)
-
-    def _apply_window_dark_styles(self):
-        """Set dark-mode stylesheets on all window-level widgets."""
-        self._apply_window_theme(dark=True)
 
     def _apply_window_theme(self, dark: bool):
         """Apply window-level styles for the given theme."""
