@@ -27,6 +27,8 @@ from matplotlib import patches
 from scipy import signal
 from scipy.interpolate import griddata
 
+from src.gui.themes.colors import get_palette
+
 logger = logging.getLogger(__name__)
 
 def _apply_mpl_theme(fig, axes, theme: str = "light"):
@@ -47,31 +49,22 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
     else:
         axes_list = [axes]
 
-    if theme == "dark":
-        bg_color = "#121212"
-        axis_bg = "#121212"
-        text_color = "#e8eaed"
-        grid_color = "#3c4043"
-    else:
-        bg_color = "#ffffff"
-        axis_bg = "#ffffff"
-        text_color = "#202124"
-        grid_color = "#dadce0"
+    p = get_palette(is_dark=(theme == "dark"))
 
-    fig.patch.set_facecolor(bg_color)
+    fig.patch.set_facecolor(p.window)
 
     if hasattr(fig, "_suptitle") and fig._suptitle is not None:
-        fig._suptitle.set_color(text_color)
+        fig._suptitle.set_color(p.text)
 
     for ax in axes_list:
-        ax.set_facecolor(axis_bg)
-        ax.tick_params(colors=text_color)
-        ax.xaxis.label.set_color(text_color)
-        ax.yaxis.label.set_color(text_color)
-        ax.title.set_color(text_color)
-        ax.grid(color=grid_color, alpha=0.3)
+        ax.set_facecolor(p.window)
+        ax.tick_params(colors=p.text)
+        ax.xaxis.label.set_color(p.text)
+        ax.yaxis.label.set_color(p.text)
+        ax.title.set_color(p.text)
+        ax.grid(color=p.grid, alpha=0.3)
         for spine in ax.spines.values():
-            spine.set_color(grid_color)
+            spine.set_color(p.grid)
 
 
 ERN_WINDOW_MS = (50, 150)

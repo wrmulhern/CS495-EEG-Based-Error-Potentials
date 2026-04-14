@@ -71,6 +71,7 @@ from .utils.multi_select import MultiSelectDropdown, MultiSelectItemDelegate
 from .help_dialog import HelpDialog
 from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
+from .themes.colors import get_palette
 from .flanker_window import FlankerWindow
 
 logger = logging.getLogger(__name__)
@@ -174,7 +175,8 @@ class FileTab(QWidget):
         epoch_layout.setSpacing(6)
 
         self.epoch_label = QLabel("Epoch (in ms)")
-        self.epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
+        p = get_palette(self._is_dark_mode)
+        self.epoch_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
 
         epoch_row = QHBoxLayout()
         epoch_row.setSpacing(10)
@@ -207,7 +209,7 @@ class FileTab(QWidget):
         sensor_layout.setContentsMargins(0, 0, 0, 0)
         sensor_layout.setSpacing(6)
         sensor_label = QLabel("Sensor(s)")
-        sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
+        sensor_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.sensor_combo = MultiSelectDropdown(["All Channels"])
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sensor_combo.confirmed.connect(self.mark_needs_update)
@@ -217,7 +219,7 @@ class FileTab(QWidget):
 
         # Graph type dropdown
         graph_type_label = QLabel("Graph Type")
-        graph_type_label.setStyleSheet("color: #202124; font-size: 12px;")
+        graph_type_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.graph_type_combo = QComboBox()
         self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Map", "Joint Maps"])
         self.graph_type_combo.currentTextChanged.connect(self._on_graph_type_changed)
@@ -231,7 +233,7 @@ class FileTab(QWidget):
         topo_layout.setContentsMargins(0, 0, 0, 0)
         topo_layout.setSpacing(6)
         topo_label = QLabel("Topomap times (s)")
-        topo_label.setStyleSheet("color: #202124; font-size: 12px;")
+        topo_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         topo_layout.addWidget(topo_label)
 
         topo_row = QHBoxLayout()
@@ -262,7 +264,7 @@ class FileTab(QWidget):
         topo_mode_layout.setContentsMargins(0, 0, 0, 0)
         topo_mode_layout.setSpacing(6)
         self.topo_mode_label = QLabel("Topomap Mode")
-        self.topo_mode_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.topo_mode_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.topo_mode_combo = QComboBox()
         self.topo_mode_combo.addItems(["Static", "Animated"])
         self.topo_mode_combo.currentTextChanged.connect(self._on_topo_mode_changed)
@@ -287,7 +289,7 @@ class FileTab(QWidget):
         anim_btn_row.addWidget(self.anim_play_btn)
 
         anim_speed_label = QLabel("Speed:")
-        anim_speed_label.setStyleSheet("color: #202124; font-size: 12px;")
+        anim_speed_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.anim_speed_combo = QComboBox()
         self.anim_speed_combo.addItems(["0.5x", "1x", "2x", "4x"])
         self.anim_speed_combo.setCurrentIndex(1)
@@ -306,7 +308,7 @@ class FileTab(QWidget):
         slider_row.addWidget(self.anim_slider, stretch=1)
 
         self.anim_time_label = QLabel("0.0 ms")
-        self.anim_time_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.anim_time_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.anim_time_label.setFixedWidth(80)
         self.anim_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         slider_row.addWidget(self.anim_time_label)
@@ -321,7 +323,7 @@ class FileTab(QWidget):
         ev_layout.setContentsMargins(0, 0, 0, 0)
         ev_layout.setSpacing(0)
         self.events_checkbox = QCheckBox("Display Events and Responses")
-        self.events_checkbox.setStyleSheet("font-size: 12px; color: #202124;")
+        self.events_checkbox.setStyleSheet(f"font-size: 12px; color: {p.text};")
         self.events_checkbox.stateChanged.connect(self._on_events_checkbox_changed)
         self.events_checkbox.stateChanged.connect(self.mark_needs_update)
         ev_layout.addWidget(self.events_checkbox)
@@ -621,20 +623,13 @@ class FileTab(QWidget):
 
     def _set_epoch_field_style(self, disabled: bool):
         """Apply greyed-out or active styling to the epoch start/end fields."""
+        p = get_palette(self._is_dark_mode)
         if disabled:
-            if self._is_dark_mode:
-                s = "QLineEdit { background: #2d2d2d; color: #5f6368; border: 1px solid #3c4043; border-radius: 4px; }"
-                lc = "color: #5f6368; font-size: 12px;"
-            else:
-                s = "QLineEdit { background: #f1f3f4; color: #9aa0a6; border: 1px solid #dadce0; border-radius: 4px; }"
-                lc = "color: #9aa0a6; font-size: 12px;"
+            bg, fg = p.surface_dim, p.text_disabled
         else:
-            if self._is_dark_mode:
-                s = "QLineEdit { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-                lc = "color: #e8eaed; font-size: 12px;"
-            else:
-                s = "QLineEdit { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
-                lc = "color: #202124; font-size: 12px;"
+            bg, fg = (p.surface_alt if self._is_dark_mode else p.surface), p.text
+        s = f"QLineEdit {{ background: {bg}; color: {fg}; border: 1px solid {p.border}; border-radius: 4px; }}"
+        lc = f"color: {fg}; font-size: 12px;"
         self.epoch_start.setStyleSheet(s)
         self.epoch_end.setStyleSheet(s)
         self.epoch_label.setStyleSheet(lc)
@@ -755,37 +750,25 @@ class FileTab(QWidget):
 
     def mark_needs_update(self):
         """Highlight the Visualize button to signal that options have changed."""
-        if self._is_dark_mode:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #8ab4f8; border: 1px solid #8ab4f8; border-radius: 4px;"
-                " font-size: 14px; color: #000000; }"
-                "QPushButton:hover { background: #669df6; }"
-                "QPushButton:pressed { background: #4a8af5; }"
-            )
-        else:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #1a73e8; border: 1px solid #1a73e8; border-radius: 4px;"
-                " font-size: 14px; color: white; }"
-                "QPushButton:hover { background: #1666c1; }"
-                "QPushButton:pressed { background: #1450b1; }"
-            )
+        p = get_palette(self._is_dark_mode)
+        fg = "#000000" if self._is_dark_mode else "#ffffff"
+        self.visualize_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.accent}; border: 1px solid {p.accent}; border-radius: 4px;"
+            f" font-size: 14px; color: {fg}; }}"
+            f"QPushButton:hover {{ background: {p.accent_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.accent_pressed}; }}"
+        )
 
     def reset_visualize_button(self):
         """Return the Visualize button to its neutral (non-highlighted) style."""
-        if self._is_dark_mode:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #202124; border: 1px solid #5f6368; border-radius: 4px;"
-                " font-size: 14px; color: #e8eaed; }"
-                "QPushButton:hover { background: #303134; }"
-                "QPushButton:pressed { background: #3c4043; }"
-            )
-        else:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; border: 1px solid #202124; border-radius: 4px;"
-                " font-size: 14px; color: #202124; }"
-                "QPushButton:hover { background: #f6f8fe; }"
-                "QPushButton:pressed { background: #e8f0fe; }"
-            )
+        p = get_palette(self._is_dark_mode)
+        bg = p.surface_alt if self._is_dark_mode else p.surface
+        self.visualize_btn.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {p.border}; border-radius: 4px;"
+            f" font-size: 14px; color: {p.text}; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.accent_tint}; }}"
+        )
 
     def apply_theme(self, is_dark: bool):
         """Re-style every widget in this tab for light or dark mode.
@@ -798,103 +781,58 @@ class FileTab(QWidget):
         applying ``_apply_mpl_theme`` to a static figure).
         """
         self._is_dark_mode = is_dark
+        p = get_palette(is_dark)
+        input_bg = p.surface_alt if is_dark else p.surface
 
-        # Graph frame border
-        if is_dark:
-            self.graph_frame.setStyleSheet(
-                "QFrame { background: #121212; border: 1px solid #3c4043; border-radius: 4px; }"
-            )
-        else:
-            self.graph_frame.setStyleSheet(
-                "QFrame { background: #ffffff; border: 1px solid #dadce0; border-radius: 4px; }"
-            )
+        self.graph_frame.setStyleSheet(
+            f"QFrame {{ background: {p.window}; border: 1px solid {p.border_strong}; border-radius: 4px; }}"
+        )
 
-        # Options box title
-        if is_dark:
-            self.options_box.setStyleSheet(
-                "QGroupBox { font-size: 13px; font-weight: 600; color: #e8eaed; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #e8eaed; }"
-            )
-        else:
-            self.options_box.setStyleSheet(
-                "QGroupBox { font-size: 13px; font-weight: 600; color: #202124; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #202124; }"
-            )
+        self.options_box.setStyleSheet(
+            f"QGroupBox {{ font-size: 13px; font-weight: 600; color: {p.text}; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {p.text}; }}"
+        )
 
-        # All QLineEdits inside this tab
         le_style = (
-            "QLineEdit { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-            if is_dark else
-            "QLineEdit { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
+            f"QLineEdit {{ background: {input_bg}; color: {p.text}; border: 1px solid {p.border}; border-radius: 4px; }}"
         )
         for le in self.findChildren(QLineEdit):
             le.setStyleSheet(le_style)
 
-        # All QComboBoxes inside this tab
         cb_style = (
-            "QComboBox { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-            "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right;"
-            " width: 18px; border-left: 1px solid #5f6368; }"
-            if is_dark else
-            "QComboBox { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
-            "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right;"
-            " width: 18px; border-left: 1px solid #dadce0; }"
+            f"QComboBox {{ background: {input_bg}; color: {p.text}; border: 1px solid {p.border}; border-radius: 4px; }}"
+            f"QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right;"
+            f" width: 18px; border-left: 1px solid {p.border}; }}"
         )
         for cb in self.findChildren(QComboBox):
             cb.setStyleSheet(cb_style)
 
-        # All QLabels inside this tab
         for lbl in self.findChildren(QLabel):
             s = lbl.styleSheet() or ""
-            if is_dark:
-                s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
-            else:
-                s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
+            old_txt = "#e8eaed" if not is_dark else "#202124"
+            old_sec = "#9aa0a6" if not is_dark else "#5f6368"
+            s = s.replace(old_txt, p.text).replace(old_sec, p.text_secondary)
             lbl.setStyleSheet(s)
 
-        # Events checkbox
-        if is_dark:
-            self.events_checkbox.setStyleSheet(
-                "QCheckBox { font-size: 12px; color: #e8eaed; }"
-                "QCheckBox::indicator { width: 16px; height: 16px; }"
-                "QCheckBox::indicator:unchecked { border-radius: 3px; border: 1px solid #9aa0a6; background: #202124; }"
-                "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #8ab4f8; background: #8ab4f8; }"
-            )
-        else:
-            self.events_checkbox.setStyleSheet(
-                "QCheckBox { font-size: 12px; color: #202124; }"
-                "QCheckBox::indicator { width: 16px; height: 16px; }"
-                "QCheckBox::indicator:unchecked { border-radius: 3px; border: 1px solid #dadce0; background: #ffffff; }"
-                "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #1a73e8; background: #1a73e8; }"
-            )
+        self.events_checkbox.setStyleSheet(
+            f"QCheckBox {{ font-size: 12px; color: {p.text}; }}"
+            f"QCheckBox::indicator {{ width: 16px; height: 16px; }}"
+            f"QCheckBox::indicator:unchecked {{ border-radius: 3px; border: 1px solid {p.border}; background: {input_bg}; }}"
+            f"QCheckBox::indicator:checked {{ border-radius: 3px; border: 1px solid {p.accent}; background: {p.accent}; }}"
+        )
 
-        # Animation play button + slider
-        if is_dark:
-            self.anim_play_btn.setStyleSheet(
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-            self.anim_slider.setStyleSheet(
-                "QSlider::groove:horizontal { background: #3c4043; height: 6px; border-radius: 3px; }"
-                "QSlider::handle:horizontal { background: #8ab4f8; width: 14px; margin: -4px 0;"
-                " border-radius: 7px; }"
-                "QSlider::sub-page:horizontal { background: #8ab4f8; border-radius: 3px; }"
-            )
-        else:
-            self.anim_play_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-                "QPushButton:pressed { background: #e8eaed; }"
-            )
-            self.anim_slider.setStyleSheet(
-                "QSlider::groove:horizontal { background: #dadce0; height: 6px; border-radius: 3px; }"
-                "QSlider::handle:horizontal { background: #1a73e8; width: 14px; margin: -4px 0;"
-                " border-radius: 7px; }"
-                "QSlider::sub-page:horizontal { background: #1a73e8; border-radius: 3px; }"
-            )
+        self.anim_play_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 10px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
+        self.anim_slider.setStyleSheet(
+            f"QSlider::groove:horizontal {{ background: {p.border_strong}; height: 6px; border-radius: 3px; }}"
+            f"QSlider::handle:horizontal {{ background: {p.accent}; width: 14px; margin: -4px 0;"
+            f" border-radius: 7px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {p.accent}; border-radius: 3px; }}"
+        )
 
         # Keep animation theme in sync so slider redraws use the right colours
         self._anim_theme = "dark" if is_dark else "light"
@@ -974,7 +912,8 @@ class FileWindow(QMainWindow):
 
         # Title
         title_lbl = QLabel("ErrP Visualizer")
-        title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #202124;")
+        p = get_palette(False)
+        title_lbl.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {p.text};")
         self.title_lbl = title_lbl
         bar.addWidget(title_lbl)
         bar.addStretch(1)
@@ -1006,7 +945,7 @@ class FileWindow(QMainWindow):
         dark_row = QHBoxLayout()
         dark_row.setSpacing(6)
         dark_lbl = QLabel("Dark mode")
-        dark_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        dark_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         self.dark_lbl = dark_lbl
         self.dark_mode_toggle = ToggleSwitch("")
         self.dark_mode_toggle.set_dark_mode(False)
@@ -1034,37 +973,23 @@ class FileWindow(QMainWindow):
 
     def _style_help_btn(self, dark: bool):
         """Apply light or dark stylesheet to the Help button."""
-        if dark:
-            self.help_btn.setStyleSheet(
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-        else:
-            self.help_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-                "QPushButton:pressed { background: #e8eaed; }"
-            )
+        p = get_palette(dark)
+        self.help_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 12px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
 
     def _style_record_eeg_btn(self, dark: bool):
         """Apply light or dark stylesheet to the Record EEG button."""
-        if dark:
-            self.record_eeg_btn.setStyleSheet(
-                "QPushButton { background: #2d2d2d; color: #f28b82; border: 1px solid #f28b82;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-        else:
-            self.record_eeg_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #c5221f; border: 1px solid #f28b82;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #fce8e6; }"
-                "QPushButton:pressed { background: #fad2cf; }"
-            )
+        p = get_palette(dark)
+        self.record_eeg_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.danger}; border: 1px solid {p.danger_border};"
+            f" border-radius: 4px; padding: 4px 12px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.danger_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
 
     def _build_tab_area(self):
         """QTabWidget that holds one FileTab per loaded file."""
@@ -1075,9 +1000,10 @@ class FileWindow(QMainWindow):
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
 
         # Show a placeholder when no tabs are open
+        p = get_palette(False)
         self._empty_label = QLabel("Drop files below or use Browse to get started")
         self._empty_label.setAlignment(Qt.AlignCenter)
-        self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
+        self._empty_label.setStyleSheet(f"color: {p.text_disabled}; font-size: 14px;")
 
         # Stack: either the tab widget or the empty label
         self._tab_stack = QVBoxLayout()
@@ -1111,8 +1037,9 @@ class FileWindow(QMainWindow):
         # Download Graph column
         download_col = QVBoxLayout()
         download_col.setSpacing(4)
+        p = get_palette(False)
         download_lbl = QLabel("Download")
-        download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        download_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         download_lbl.setAlignment(Qt.AlignHCenter)
         download_lbl.setFixedWidth(BTN_W)
         self.download_lbl = download_lbl
@@ -1136,7 +1063,7 @@ class FileWindow(QMainWindow):
         side_col.setSpacing(4)
 
         browse_lbl = QLabel("Browse")
-        browse_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        browse_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         browse_lbl.setAlignment(Qt.AlignHCenter)
         browse_lbl.setFixedWidth(BTN_W)
         self.browse_lbl = browse_lbl
@@ -1146,7 +1073,7 @@ class FileWindow(QMainWindow):
         self.browse_btn.clicked.connect(self._browse_files)
 
         clear_lbl = QLabel("Clear All")
-        clear_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        clear_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         clear_lbl.setAlignment(Qt.AlignHCenter)
         clear_lbl.setFixedWidth(BTN_W)
         self.clear_lbl = clear_lbl
@@ -1168,7 +1095,7 @@ class FileWindow(QMainWindow):
         df_layout.addLayout(side_col, 0, 4, 1, 1)
 
         self.files_label = QLabel("No files loaded")
-        self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
+        self.files_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px;")
         self.files_label.setWordWrap(True)
         df_layout.addWidget(self.files_label, 1, 0, 1, 5)
 
@@ -1334,91 +1261,62 @@ class FileWindow(QMainWindow):
 
     def _apply_window_light_styles(self):
         """Set light-mode stylesheets on all window-level widgets."""
-        self.dark_mode_toggle.set_dark_mode(False)
-        self.drop_zone.set_dark_mode(False)
-        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
-
-        self.drop_browse_frame.setStyleSheet(
-            "QFrame { background: #ffffff; border: 1px solid #dadce0; border-radius: 4px; }"
-        )
-        self._style_clear_btn(dark=False)
-
-        for lbl in [self.title_lbl, self.dark_lbl,
-                    self.browse_lbl, self.clear_lbl, self.download_lbl]:
-            s = lbl.styleSheet()
-            s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
-            lbl.setStyleSheet(s)
-        self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
-        self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
-
-        light_btn_style = (
-            "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-            " border-radius: 4px; padding: 4px 8px; }"
-            " QPushButton:hover { background: #f1f3f4; }"
-        )
-        self.browse_btn.setStyleSheet(light_btn_style)
-        self.download_btn.setStyleSheet(light_btn_style)
+        self._apply_window_theme(dark=False)
 
     def _apply_window_dark_styles(self):
         """Set dark-mode stylesheets on all window-level widgets."""
-        self.dark_mode_toggle.set_dark_mode(True)
-        self.drop_zone.set_dark_mode(True)
-        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=True))
+        self._apply_window_theme(dark=True)
+
+    def _apply_window_theme(self, dark: bool):
+        """Apply window-level styles for the given theme."""
+        p = get_palette(dark)
+
+        self.dark_mode_toggle.set_dark_mode(dark)
+        self.drop_zone.set_dark_mode(dark)
+        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=dark))
 
         self.drop_browse_frame.setStyleSheet(
-            "QFrame { background: #121212; border: 1px solid #3c4043; border-radius: 4px; }"
+            f"QFrame {{ background: {p.window}; border: 1px solid {p.border_strong}; border-radius: 4px; }}"
         )
-        self._style_clear_btn(dark=True)
+        self._style_clear_btn(dark=dark)
 
         for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
-            s = lbl.styleSheet()
-            s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
+            s = lbl.styleSheet() or ""
+            old_txt = "#e8eaed" if not dark else "#202124"
+            old_sec = "#9aa0a6" if not dark else "#5f6368"
+            s = s.replace(old_txt, p.text).replace(old_sec, p.text_secondary)
             lbl.setStyleSheet(s)
-        self.files_label.setStyleSheet("color: #9aa0a6; font-size: 11px;")
-        self._empty_label.setStyleSheet("color: #5f6368; font-size: 14px;")
+        self.files_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px;")
+        self._empty_label.setStyleSheet(f"color: {p.text_disabled}; font-size: 14px;")
 
-        dark_btn_style = (
-            "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-            " border-radius: 4px; padding: 4px 8px; }"
-            " QPushButton:hover { background: #3c4043; }"
+        btn_style = (
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 8px; }}"
+            f" QPushButton:hover {{ background: {p.surface_hover}; }}"
         )
-        self.browse_btn.setStyleSheet(dark_btn_style)
-        self.download_btn.setStyleSheet(dark_btn_style)
+        self.browse_btn.setStyleSheet(btn_style)
+        self.download_btn.setStyleSheet(btn_style)
 
     def _style_clear_btn(self, dark: bool):
         """Apply light or dark stylesheet to the "Clear All" button."""
-        if dark:
-            self.clear_btn.setStyleSheet(
-                "QPushButton { background: #202124; border: 1px solid #f28b82; border-radius: 4px;"
-                " color: #f28b82; font-size: 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-            )
-        else:
-            self.clear_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; border: 1px solid #d93025; border-radius: 4px;"
-                " color: #d93025; font-size: 16px; }"
-                "QPushButton:hover { background: #fce8e6; }"
-            )
+        p = get_palette(dark)
+        bg = p.surface_alt if dark else p.surface
+        self.clear_btn.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {p.danger_border}; border-radius: 4px;"
+            f" color: {p.danger}; font-size: 16px; }}"
+            f"QPushButton:hover {{ background: {p.danger_hover}; }}"
+        )
 
     @staticmethod
     def _tab_widget_style(dark: bool) -> str:
         """Return the ``QTabWidget`` / ``QTabBar`` stylesheet for the given theme."""
-        if dark:
-            return (
-                "QTabWidget::pane { border: 1px solid #3c4043; background: #1e1e1e; border-radius: 4px; }"
-                "QTabBar::tab { background: #2d2d2d; color: #9aa0a6; padding: 6px 16px;"
-                " border: 1px solid #3c4043; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }"
-                "QTabBar::tab:selected { background: #1e1e1e; color: #e8eaed; border-bottom: 1px solid #1e1e1e; }"
-                "QTabBar::tab:hover { background: #3c4043; color: #e8eaed; }"
-                "QTabBar::close-button { subcontrol-position: right; }"
-            )
-        else:
-            return (
-                "QTabWidget::pane { border: 1px solid #dadce0; background: #ffffff; border-radius: 4px; }"
-                "QTabBar::tab { background: #f1f3f4; color: #5f6368; padding: 6px 16px;"
-                " border: 1px solid #dadce0; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }"
-                "QTabBar::tab:selected { background: #ffffff; color: #202124; border-bottom: 1px solid #ffffff; }"
-                "QTabBar::tab:hover { background: #e8eaed; color: #202124; }"
-                "QTabBar::close-button { subcontrol-position: right; }"
-            )
+        p = get_palette(dark)
+        return (
+            f"QTabWidget::pane {{ border: 1px solid {p.border_strong}; background: {p.surface}; border-radius: 4px; }}"
+            f"QTabBar::tab {{ background: {p.surface_dim}; color: {p.text_secondary}; padding: 6px 16px;"
+            f" border: 1px solid {p.border_strong}; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }}"
+            f"QTabBar::tab:selected {{ background: {p.surface}; color: {p.text}; border-bottom: 1px solid {p.surface}; }}"
+            f"QTabBar::tab:hover {{ background: {p.surface_hover}; color: {p.text}; }}"
+            f"QTabBar::close-button {{ subcontrol-position: right; }}"
+        )

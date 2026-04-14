@@ -46,6 +46,7 @@ from src.data_processing.eeg_recorder import (
     MARKER_CONGRUENT, MARKER_INCONGRUENT,
     MARKER_CORRECT, MARKER_ERROR, MARKER_NO_RESPONSE,
 )
+from src.gui.themes.colors import get_palette
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,8 @@ class FlankerWindow(QDialog):
         # Output dir label
         self._output_lbl = QLabel(self.output_dir)
         self._output_lbl.setWordWrap(True)
-        self._output_lbl.setStyleSheet("color: #5f6368; font-size: 11px;")
+        _p = get_palette(self.is_dark)
+        self._output_lbl.setStyleSheet(f"color: {_p.text_secondary}; font-size: 11px;")
         form.addRow("Save to:", self._output_lbl)
 
         outer.addLayout(form)
@@ -209,8 +211,8 @@ class FlankerWindow(QDialog):
                 "The task will run without EEG recording until then."
             )
             warn.setStyleSheet(
-                "background: #fce8e6; color: #c5221f; border-radius: 6px;"
-                " padding: 10px; font-size: 12px;"
+                f"background: {_p.danger_bg}; color: {_p.danger}; border-radius: 6px;"
+                f" padding: 10px; font-size: 12px;"
             )
             warn.setWordWrap(True)
             outer.addWidget(warn)
@@ -272,10 +274,11 @@ class FlankerWindow(QDialog):
 
         begin_btn = QPushButton("Begin Task  ▶")
         begin_btn.setFixedHeight(48)
+        _p = get_palette(self.is_dark)
         begin_btn.setStyleSheet(
-            "QPushButton { background: #1a73e8; color: white; border-radius: 6px;"
-            " font-size: 16px; font-weight: 600; }"
-            "QPushButton:hover { background: #1557b0; }"
+            f"QPushButton {{ background: {_p.accent}; color: white; border-radius: 6px;"
+            f" font-size: 16px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_p.accent_hover}; }}"
         )
         begin_btn.clicked.connect(self._begin_task)
         outer.addWidget(begin_btn, alignment=Qt.AlignHCenter)
@@ -315,14 +318,15 @@ class FlankerWindow(QDialog):
         # Trial counter
         self._trial_counter_lbl = QLabel("")
         self._trial_counter_lbl.setAlignment(Qt.AlignCenter)
-        self._trial_counter_lbl.setStyleSheet("font-size: 12px; color: #9aa0a6; padding: 10px;")
+        _p = get_palette(self.is_dark)
+        self._trial_counter_lbl.setStyleSheet(f"font-size: 12px; color: {_p.text_disabled}; padding: 10px;")
         outer.addWidget(self._trial_counter_lbl)
 
         # Abort button (small, bottom right)
         abort_row = QHBoxLayout()
         abort_row.addStretch(1)
         abort_btn = QPushButton("Abort")
-        abort_btn.setStyleSheet("color: #c5221f; border: none; font-size: 11px;")
+        abort_btn.setStyleSheet(f"color: {_p.danger}; border: none; font-size: 11px;")
         abort_btn.clicked.connect(self._abort_task)
         abort_row.addWidget(abort_btn)
         outer.addLayout(abort_row)
@@ -337,9 +341,10 @@ class FlankerWindow(QDialog):
         outer.setSpacing(20)
         outer.addStretch(1)
 
+        _p = get_palette(self.is_dark)
         self._done_icon = QLabel("✓")
         self._done_icon.setAlignment(Qt.AlignCenter)
-        self._done_icon.setStyleSheet("font-size: 64px; color: #34a853;")
+        self._done_icon.setStyleSheet(f"font-size: 64px; color: {_p.success};")
         outer.addWidget(self._done_icon)
 
         self._done_title = QLabel("Recording Complete")
@@ -349,15 +354,15 @@ class FlankerWindow(QDialog):
 
         self._done_stats = QLabel("")
         self._done_stats.setAlignment(Qt.AlignCenter)
-        self._done_stats.setStyleSheet("font-size: 14px; color: #5f6368; line-height: 1.8;")
+        self._done_stats.setStyleSheet(f"font-size: 14px; color: {_p.text_secondary}; line-height: 1.8;")
         self._done_stats.setWordWrap(True)
         outer.addWidget(self._done_stats)
 
         self._done_path = QLabel("")
         self._done_path.setAlignment(Qt.AlignCenter)
         self._done_path.setStyleSheet(
-            "font-size: 11px; color: #5f6368; font-family: monospace;"
-            " background: rgba(128,128,128,0.08); border-radius: 4px; padding: 8px;"
+            f"font-size: 11px; color: {_p.text_secondary}; font-family: monospace;"
+            f" background: rgba(128,128,128,0.08); border-radius: 4px; padding: 8px;"
         )
         self._done_path.setWordWrap(True)
         outer.addWidget(self._done_path)
@@ -370,9 +375,9 @@ class FlankerWindow(QDialog):
         self._open_btn = QPushButton("Open in Visualizer →")
         self._open_btn.setFixedHeight(40)
         self._open_btn.setStyleSheet(
-            "QPushButton { background: #1a73e8; color: white; border-radius: 6px;"
-            " font-size: 14px; font-weight: 600; }"
-            "QPushButton:hover { background: #1557b0; }"
+            f"QPushButton {{ background: {_p.accent}; color: white; border-radius: 6px;"
+            f" font-size: 14px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_p.accent_hover}; }}"
         )
         self._open_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
@@ -507,7 +512,8 @@ class FlankerWindow(QDialog):
                     self._recorder.insert_marker(MARKER_NO_RESPONSE)
                 self._record_result(trial, "no_response", None)
                 self._feedback_lbl.setText("Too slow!")
-                self._feedback_lbl.setStyleSheet("font-size: 20px; color: #f4a400;")
+                _p = get_palette(self.is_dark)
+                self._feedback_lbl.setStyleSheet(f"font-size: 20px; color: {_p.warning};")
             # (correct/error feedback already shown in keypress handler)
 
             self._timer.start(FEEDBACK_MS)
@@ -548,14 +554,16 @@ class FlankerWindow(QDialog):
         if correct:
             if self._recorder:
                 self._recorder.insert_marker(MARKER_CORRECT)
+            _p = get_palette(self.is_dark)
             self._feedback_lbl.setText("✓")
-            self._feedback_lbl.setStyleSheet("font-size: 28px; color: #34a853;")
+            self._feedback_lbl.setStyleSheet(f"font-size: 28px; color: {_p.success};")
             self._record_result(trial, "correct", self._response_time)
         else:
             if self._recorder:
                 self._recorder.insert_marker(MARKER_ERROR)
+            _p = get_palette(self.is_dark)
             self._feedback_lbl.setText("✗")
-            self._feedback_lbl.setStyleSheet("font-size: 28px; color: #ea4335;")
+            self._feedback_lbl.setStyleSheet(f"font-size: 28px; color: {_p.error};")
             self._record_result(trial, "error", self._response_time)
 
     def _record_result(self, trial: dict, outcome: str, rt):
@@ -653,33 +661,19 @@ class FlankerWindow(QDialog):
 
     def _apply_theme(self, dark: bool):
         """Set global light or dark stylesheet on the dialog and all child widgets."""
-        if dark:
-            self.setStyleSheet(
-                "QDialog, QWidget { background: #1e1e1e; color: #e8eaed; }"
-                "QLabel { color: #e8eaed; }"
-                "QPushButton { background: #303134; color: #e8eaed;"
-                " border: 1px solid #5f6368; border-radius: 4px; padding: 6px 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QComboBox { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 8px; }"
-                "QSpinBox  { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 8px; }"
-                "QProgressBar { background: #303134; border: none; }"
-                "QProgressBar::chunk { background: #1a73e8; }"
-                "QFrame[frameShape='4'] { color: #3c4043; }"  # HLine
-            )
-        else:
-            self.setStyleSheet(
-                "QDialog, QWidget { background: #ffffff; color: #202124; }"
-                "QLabel { color: #202124; }"
-                "QPushButton { background: #ffffff; color: #202124;"
-                " border: 1px solid #dadce0; border-radius: 4px; padding: 6px 16px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-                "QComboBox { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 8px; }"
-                "QSpinBox  { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 8px; }"
-                "QProgressBar { background: #f1f3f4; border: none; }"
-                "QProgressBar::chunk { background: #1a73e8; }"
-                "QFrame[frameShape='4'] { color: #dadce0; }"  # HLine
-            )
+        p = get_palette(dark)
+        accent_raw = "#1a73e8"  # progress bar accent is always the light-mode blue
+        self.setStyleSheet(
+            f"QDialog, QWidget {{ background: {p.surface}; color: {p.text}; }}"
+            f"QLabel {{ color: {p.text}; }}"
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text};"
+            f" border: 1px solid {p.border}; border-radius: 4px; padding: 6px 16px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QComboBox {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 8px; }}"
+            f"QSpinBox  {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 8px; }}"
+            f"QProgressBar {{ background: {p.surface_elevated}; border: none; }}"
+            f"QProgressBar::chunk {{ background: {accent_raw}; }}"
+            f"QFrame[frameShape='4'] {{ color: {p.border_strong}; }}"
+        )

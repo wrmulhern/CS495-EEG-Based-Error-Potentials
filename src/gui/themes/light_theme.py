@@ -1,17 +1,14 @@
 """
 Light-mode QPalette for the Fusion style.
 
-Applies a Google-Material-inspired colour scheme (white backgrounds,
-``#202124`` text, ``#1a73e8`` accent) as the application-wide default.
-Called once at startup and again whenever the user switches away from
-dark mode.
+Applies a Google-Material-inspired colour scheme as the application-wide
+default, using colors from :mod:`src.gui.themes.colors`.
 """
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtWidgets import (
-    QApplication
-)
+from PyQt5.QtWidgets import QApplication
+
+from src.gui.themes.colors import LIGHT as P
 
 
 def apply_light_theme(app: QApplication) -> None:
@@ -20,17 +17,17 @@ def apply_light_theme(app: QApplication) -> None:
 
     pal = QPalette()
 
-    pal.setColor(QPalette.Window, QColor(245, 245, 245))
-    pal.setColor(QPalette.WindowText, QColor(32, 33, 36))
+    pal.setColor(QPalette.Window, QColor("#f5f5f5"))
+    pal.setColor(QPalette.WindowText, QColor(P.text))
 
-    pal.setColor(QPalette.Base, QColor(255, 255, 255))
-    pal.setColor(QPalette.AlternateBase, QColor(240, 240, 240))
+    pal.setColor(QPalette.Base, QColor(P.surface))
+    pal.setColor(QPalette.AlternateBase, QColor("#f0f0f0"))
 
-    pal.setColor(QPalette.Text, QColor(32, 33, 36))
-    pal.setColor(QPalette.Button, QColor(255, 255, 255))
-    pal.setColor(QPalette.ButtonText, QColor(32, 33, 36))
+    pal.setColor(QPalette.Text, QColor(P.text))
+    pal.setColor(QPalette.Button, QColor(P.surface))
+    pal.setColor(QPalette.ButtonText, QColor(P.text))
 
-    pal.setColor(QPalette.Highlight, QColor(26, 115, 232))
-    pal.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    pal.setColor(QPalette.Highlight, QColor(P.accent))
+    pal.setColor(QPalette.HighlightedText, QColor(P.surface))
 
     app.setPalette(pal)

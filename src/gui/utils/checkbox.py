@@ -4,11 +4,13 @@ iOS-style toggle switch implemented as a styled ``QCheckBox``.
 Used by :class:`~src.gui.file_window.FileWindow` for the dark-mode
 toggle in the top bar.  The widget preserves the standard
 ``QCheckBox`` API (``isChecked()``, ``stateChanged`` signal, etc.)
-while rendering as a 44×24 px rounded pill via Qt stylesheets.
+while rendering as a 44x24 px rounded pill via Qt stylesheets.
 """
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QCheckBox
+
+from src.gui.themes.colors import get_palette
 
 
 class ToggleSwitch(QCheckBox):
@@ -41,60 +43,29 @@ class ToggleSwitch(QCheckBox):
 
     def _apply_styles(self) -> None:
         """Re-apply the full stylesheet for the current theme."""
-        if not self._is_dark_mode:
-            self.setStyleSheet(
-                """
-                QCheckBox {
-                    spacing: 10px;
-                    color: #202124;
-                    font-size: 13px;
-                }
-                QCheckBox::indicator {
-                    width: 44px;
-                    height: 24px;
-                }
-                QCheckBox::indicator:unchecked {
-                    border-radius: 12px;
-                    background: #dadce0;
-                }
-                QCheckBox::indicator:unchecked:pressed {
-                    background: #c7c9cc;
-                }
-                QCheckBox::indicator:checked {
-                    border-radius: 12px;
-                    background: #1a73e8;
-                }
-                QCheckBox::indicator:checked:pressed {
-                    background: #1666c1;
-                }
-                """
-            )
-        else:
-            # Dark mode: same structure, higher contrast colors
-            self.setStyleSheet(
-                """
-                QCheckBox {
-                    spacing: 10px;
-                    color: #e8eaed;
-                    font-size: 13px;
-                }
-                QCheckBox::indicator {
-                    width: 44px;
-                    height: 24px;
-                }
-                QCheckBox::indicator:unchecked {
-                    border-radius: 12px;
-                    background: #5f6368;
-                }
-                QCheckBox::indicator:unchecked:pressed {
-                    background: #80868b;
-                }
-                QCheckBox::indicator:checked {
-                    border-radius: 12px;
-                    background: #8ab4f8;
-                }
-                QCheckBox::indicator:checked:pressed {
-                    background: #669df6;
-                }
-                """
-            )
+        p = get_palette(self._is_dark_mode)
+        self.setStyleSheet(f"""
+            QCheckBox {{
+                spacing: 10px;
+                color: {p.text};
+                font-size: 13px;
+            }}
+            QCheckBox::indicator {{
+                width: 44px;
+                height: 24px;
+            }}
+            QCheckBox::indicator:unchecked {{
+                border-radius: 12px;
+                background: {p.toggle_track_off};
+            }}
+            QCheckBox::indicator:unchecked:pressed {{
+                background: {p.toggle_track_off_pressed};
+            }}
+            QCheckBox::indicator:checked {{
+                border-radius: 12px;
+                background: {p.toggle_track_on};
+            }}
+            QCheckBox::indicator:checked:pressed {{
+                background: {p.toggle_track_on_pressed};
+            }}
+        """)

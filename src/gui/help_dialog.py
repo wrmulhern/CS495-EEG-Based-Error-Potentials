@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.gui.themes.colors import get_palette
+
 README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-Potentials/main/README.md"
 
 
@@ -164,19 +166,11 @@ embedded Matplotlib figures.</p>
         return f"<p>{html}</p>"
 
     def _apply_theme(self, is_dark: bool):
-        if is_dark:
-            self.setStyleSheet(
-                "QDialog { background: #1e1e1e; }"
-                "QTextBrowser { background: #1e1e1e; color: #e8eaed; border: none; font-size: 13px; }"
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-            )
-        else:
-            self.setStyleSheet(
-                "QDialog { background: #ffffff; }"
-                "QTextBrowser { background: #ffffff; color: #202124; border: none; font-size: 13px; }"
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-            )
+        p = get_palette(is_dark)
+        self.setStyleSheet(
+            f"QDialog {{ background: {p.surface}; }}"
+            f"QTextBrowser {{ background: {p.surface}; color: {p.text}; border: none; font-size: 13px; }}"
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 16px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+        )
