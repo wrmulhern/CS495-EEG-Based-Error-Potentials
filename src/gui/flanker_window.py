@@ -391,15 +391,31 @@ class FlankerWindow(QDialog):
     def _refresh_ports(self):
         """Re-populate the serial-port combo from ``EEGRecorder.list_ports()``."""
         self._port_combo.clear()
-        ports = EEGRecorder.list_ports()
-        if ports:
-            self._port_combo.addItems(ports)
-        else:
-            self._port_combo.addItem(GANGLION.default_port)
+    
+        try:
+            import serial.tools.list_ports
+            ports = list(serial.tools.list_ports.comports())
+            if ports:
+                for port in ports:
+                    # Shows e.g. "COM4 — OpenBCI Ganglion" or "/dev/cu.usbmodem1 — USB Serial"
+                    description = port.description or "Unknown device"
+                    display = f"{port.device} — {description}"
+                    self._port_combo.addItem(display, userData=port.device)
+            else:
+                self._port_combo.addItem(GANGLION.default_port, userData=GANGLION.default_port)
+        except ImportError:
+            # Fall back to EEGRecorder.list_ports() if pyserial not directly available
+            ports = EEGRecorder.list_ports()
+            if ports:
+                self._port_combo.addItems(ports)
+            else:
+                self._port_combo.addItem(GANGLION.default_port)
 
     def _on_setup_start(self):
-        """Validate port, build the trial list, and connect to the Ganglion in a background thread."""
-        port = self._port_combo.currentText().strip()
+        # Get actual port device from userData, fall back to text if not set
+        port = self._port_combo.currentData() or self._port_combo.currentText().strip()
+        if " — " in port:  # user typed a full display string manually
+            port = port.split(" — ")[0].strip()
         if not port:
             QMessageBox.warning(self, "No port", "Please select or enter a serial port.")
             return
