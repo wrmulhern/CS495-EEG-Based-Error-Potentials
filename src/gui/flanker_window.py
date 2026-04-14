@@ -47,6 +47,7 @@ from src.data_processing.eeg_recorder import (
     MARKER_CORRECT, MARKER_ERROR, MARKER_NO_RESPONSE,
 )
 from src.gui.themes.colors import get_palette
+from src.config import FLANKER, GANGLION
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +62,11 @@ STIMULI = [
     ("> > < > >",  False, "left"),
 ]
 
-FIXATION_MS   = 500     #: Duration of the fixation cross (ms).
-STIMULUS_MS   = 200     #: Duration the arrow string is visible (ms).
-RESPONSE_MS   = 1000    #: Response window after stimulus offset (ms).
-FEEDBACK_MS   = 400     #: Duration of ✓ / ✗ / "Too slow!" feedback (ms).
-ITI_MS        = 800     #: Blank inter-trial interval (ms).
+FIXATION_MS   = FLANKER.fixation_ms
+STIMULUS_MS   = FLANKER.stimulus_ms
+RESPONSE_MS   = FLANKER.response_ms
+FEEDBACK_MS   = FLANKER.feedback_ms
+ITI_MS        = FLANKER.iti_ms
 
 
 class _Signals(QObject):
@@ -188,7 +189,7 @@ class FlankerWindow(QDialog):
         # Trial count
         self._trial_spin = QSpinBox()
         self._trial_spin.setRange(20, 400)
-        self._trial_spin.setValue(100)
+        self._trial_spin.setValue(FLANKER.default_n_trials)
         self._trial_spin.setSingleStep(20)
         self._trial_spin.setSuffix("  trials")
         form.addRow("Number of trials:", self._trial_spin)
@@ -394,7 +395,7 @@ class FlankerWindow(QDialog):
         if ports:
             self._port_combo.addItems(ports)
         else:
-            self._port_combo.addItem("COM3")   # sensible default, can be changed for windows users
+            self._port_combo.addItem(GANGLION.default_port)
 
     def _on_setup_start(self):
         """Validate port, build the trial list, and connect to the Ganglion in a background thread."""
@@ -458,7 +459,7 @@ class FlankerWindow(QDialog):
         self._progress.setMaximum(len(self._trials))
         self._progress.setValue(0)
         self.setFocus()
-        QTimer.singleShot(500, self._next_trial)
+        QTimer.singleShot(FLANKER.initial_delay_ms, self._next_trial)
 
     def _next_trial(self):
         """Reset per-trial state, show the fixation cross, and start the timer."""

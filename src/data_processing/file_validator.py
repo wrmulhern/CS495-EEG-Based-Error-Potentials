@@ -33,12 +33,13 @@ from pathlib import Path
 from typing import Tuple, List, Optional
 import numpy as np
 
+from src.config import VALIDATION
+
 logger = logging.getLogger(__name__)
 
-# Security and Format Constants
-ALLOWED_EXTENSIONS = {'.set', '.csv'}
-MAX_FILE_SIZE_MB = 500  # Maximum 500 MB
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+ALLOWED_EXTENSIONS = set(VALIDATION.allowed_extensions)
+MAX_FILE_SIZE_MB = VALIDATION.max_file_size_mb
+MAX_FILE_SIZE_BYTES = VALIDATION.max_file_size_bytes
 
 # File signature/magic bytes for validation
 SET_FILE_SIGNATURES = [
@@ -50,13 +51,12 @@ CSV_FILE_SIGNATURES = [
     b'\xef\xbb\xbf',  # UTF-8 BOM
 ]
 
-# EEG Data validation ranges
-EEG_VOLTAGE_MIN_UV = -1000
-EEG_VOLTAGE_MAX_UV = 1000
-EEG_SFREQ_MIN_HZ = 8
-EEG_SFREQ_MAX_HZ = 10000
-EEG_CHANNELS_MIN = 1
-EEG_CHANNELS_MAX = 256
+EEG_VOLTAGE_MIN_UV = VALIDATION.eeg_voltage_min_uv
+EEG_VOLTAGE_MAX_UV = VALIDATION.eeg_voltage_max_uv
+EEG_SFREQ_MIN_HZ = VALIDATION.eeg_sfreq_min_hz
+EEG_SFREQ_MAX_HZ = VALIDATION.eeg_sfreq_max_hz
+EEG_CHANNELS_MIN = VALIDATION.eeg_channels_min
+EEG_CHANNELS_MAX = VALIDATION.eeg_channels_max
 
 # Filename validation pattern - reject suspicious characters
 DANGEROUS_FILENAME_PATTERN = re.compile(r'[\x00-\x1f\\]|\.\.|\0')
@@ -184,7 +184,7 @@ class FileValidator:
             FileValidationError: If the header bytes do not match.
         """
         with open(file_path, 'rb') as f:
-            header = f.read(8)
+            header = f.read(VALIDATION.magic_header_bytes)
         
         if file_type == 'set':
             # Check for MATLAB or HDF5 signature
@@ -249,7 +249,7 @@ class FileValidator:
                     raise FileValidationError("CSV headers are empty")
                 
                 # Validate headers
-                if len(headers) < 2:
+                if len(headers) < VALIDATION.csv_min_columns:
                     raise FileValidationError(
                         f"CSV has too few columns ({len(headers)}). Expected at least 2."
                     )
@@ -259,10 +259,10 @@ class FileValidator:
                 # Count rows and validate consistency (allow some tolerance for missing data)
                 row_count = 0
                 inconsistent_rows = 0
-                max_inconsistent_allowed = 5  # Allow up to 5 rows with different column counts
+                max_inconsistent_allowed = VALIDATION.csv_max_bad_rows
                 
                 for row_idx, row in enumerate(reader):
-                    if row_idx >= 100000:  # Limit initial validation to first 100k rows
+                    if row_idx >= VALIDATION.csv_max_scan_rows:
                         break
                     
                     # Skip empty rows
@@ -273,7 +273,8 @@ class FileValidator:
                     
                     # Check column count - allow some tolerance for incomplete rows
                     # (EEG data might have trailing missing values)
-                    if len(row) < expected_cols - 2 or len(row) > expected_cols + 2:
+                    slack = VALIDATION.csv_col_slack
+                    if len(row) < expected_cols - slack or len(row) > expected_cols + slack:
                         inconsistent_rows += 1
                         if inconsistent_rows > max_inconsistent_allowed:
                             raise FileValidationError(
@@ -302,7 +303,7 @@ class FileValidator:
     def validate_csv_data_integrity(
         file_path: str,
         headers: List[str],
-        sample_rows: int = 100
+        sample_rows: int = VALIDATION.csv_sample_rows
     ) -> None:
         """Spot-check numeric values in the first *sample_rows* data rows.
 

@@ -30,13 +30,15 @@ import logging
 import numpy as np
 from pathlib import Path
 
+from src.config import GANGLION, MARKERS, RECORDER
+
 logger = logging.getLogger(__name__)
 
-MARKER_CONGRUENT     = 1   #: Congruent stimulus onset  (``< < < < <`` or ``> > > > >``).
-MARKER_INCONGRUENT   = 2   #: Incongruent stimulus onset (``< < > < <`` or ``> > < > >``).
-MARKER_CORRECT       = 3   #: Participant responded correctly.
-MARKER_ERROR         = 4   #: Participant responded incorrectly (expected to elicit ERN).
-MARKER_NO_RESPONSE   = 5   #: Response window expired with no keypress.
+MARKER_CONGRUENT     = MARKERS.congruent
+MARKER_INCONGRUENT   = MARKERS.incongruent
+MARKER_CORRECT       = MARKERS.correct
+MARKER_ERROR         = MARKERS.error
+MARKER_NO_RESPONSE   = MARKERS.no_response
 
 
 class EEGRecorder:
@@ -60,11 +62,11 @@ class EEGRecorder:
         MARKER_COL (int): BrainFlow column index for event markers.
     """
 
-    SFREQ       = 200
-    N_CHANNELS  = 4
-    EEG_COLS    = [1, 2, 3, 4]
-    TS_COL      = 13
-    MARKER_COL  = 14
+    SFREQ       = GANGLION.sfreq
+    N_CHANNELS  = GANGLION.n_channels
+    EEG_COLS    = list(GANGLION.eeg_cols)
+    TS_COL      = GANGLION.ts_col
+    MARKER_COL  = GANGLION.marker_col
 
     def __init__(self, port: str):
         """
@@ -95,7 +97,7 @@ class EEGRecorder:
 
             self._board = BoardShim(BoardIds.GANGLION_NATIVE_BOARD, params)
             self._board.prepare_session()
-            self._board.start_stream(45000)   # ring buffer: 45 000 samples (~225 s)
+            self._board.start_stream(GANGLION.ring_buffer_samples)
             self._running = True
             logger.info(f"EEG stream started on {self.port}")
 
@@ -157,7 +159,7 @@ class EEGRecorder:
         # col 0 = sample index, cols 1-4 = EEG (µV), cols 5-12 = zeros,
         # col 13 = timestamp, col 14 = marker (aka the events (correct, error, etc))
         n_samples = data.shape[1]
-        rows = np.zeros((n_samples, 15))
+        rows = np.zeros((n_samples, GANGLION.csv_total_cols))
 
         rows[:, 0]     = np.arange(n_samples)          # sample index
         rows[:, 1:5]   = data[self.EEG_COLS, :].T      # EEG channels (µV)
@@ -169,15 +171,14 @@ class EEGRecorder:
         output_path = Path(output_dir) / f"flanker_eeg_{ts}.csv"
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Header row
-        header = ",".join(str(i) for i in range(15))
+        header = ",".join(str(i) for i in range(GANGLION.csv_total_cols))
         np.savetxt(
             str(output_path),
             rows,
             delimiter=",",
             header=header,
             comments="",
-            fmt="%.10g",
+            fmt=RECORDER.numpy_fmt,
         )
 
         logger.info(f"EEG saved to {output_path}")

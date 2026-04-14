@@ -73,6 +73,7 @@ from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
 from .themes.colors import get_palette
 from .flanker_window import FlankerWindow
+from src.config import VALIDATION, EXPORT, PLOT
 
 logger = logging.getLogger(__name__)
 class FileTab(QWidget):
@@ -405,7 +406,7 @@ class FileTab(QWidget):
 
         if graph_type in ("Topographic Map", "Joint Maps"):
                 n_channels = len(self.current_epochs.ch_names)
-                if n_channels < 19:
+                if n_channels < VALIDATION.min_topo_channels:
                     QMessageBox.warning(
                         self, "Insufficient Channels",
                         f"Topographic maps require at least 19 channels for reliable spatial interpolation.\n\n"
@@ -702,7 +703,7 @@ class FileTab(QWidget):
             return
         self._anim_playing = True
         self.anim_play_btn.setText("⏸  Pause")
-        self._anim_timer.start(50)
+        self._anim_timer.start(PLOT.anim_timer_ms)
 
     def _pause_animation(self):
         """Stop the timer and restore the Play button label."""
@@ -725,7 +726,7 @@ class FileTab(QWidget):
         speed = float(speed_text.replace("x", ""))
 
         sfreq = self._anim_evoked.sfreq
-        step = max(1, round(sfreq * 0.025 * speed))
+        step = max(1, round(sfreq * PLOT.anim_tick_duration_s * speed))
 
         current = self.anim_slider.value()
         new_val = current + step
@@ -882,7 +883,7 @@ class FileWindow(QMainWindow):
     def __init__(self, file_path: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("ErrP Visualizer")
-        self.resize(1280, 760)
+        self.resize(*PLOT.main_window_size)
 
         self.is_dark_mode = False
         # Track absolute paths already open so we dont duplicate tabs
@@ -1111,7 +1112,7 @@ class FileWindow(QMainWindow):
             self,
             "Select .set or .csv file(s)",
             "",
-            "EEG Files (*.set *.csv);;All Files (*.*)"
+            EXPORT.file_dialog_filter
         )
         if paths:
             self.add_files(paths)
@@ -1128,17 +1129,16 @@ class FileWindow(QMainWindow):
             self,
             "Save Graph As",
             "",
-            "PNG Files (*.png);;All Files (*.*)"
+            EXPORT.save_dialog_filter
         )
 
         if filename:
             try:
                 # Ensure the filename has .png extension
-                if not filename.lower().endswith('.png'):
-                    filename += '.png'
+                if not filename.lower().endswith(EXPORT.save_format):
+                    filename += EXPORT.save_format
 
-                # Save the figure
-                current_tab.figure.savefig(filename, dpi=300, bbox_inches='tight')
+                current_tab.figure.savefig(filename, dpi=EXPORT.save_dpi, bbox_inches='tight')
                 QMessageBox.information(self, "Success", f"Graph saved as {filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save graph:\n{str(e)}")

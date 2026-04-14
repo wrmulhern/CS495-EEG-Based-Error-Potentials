@@ -6,25 +6,16 @@ import numpy as np
 import pandas as pd
 from scipy.io import savemat
 
+from src.config import GANGLION, MARKERS, EPOCH
+
 logger = logging.getLogger(__name__)
 
-GANGLION_SFREQ = 200
-GANGLION_N_CHANNELS = 4
-GANGLION_CH_LOCS = [
-    {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
-    {'labels': 'AF7',  'X': -0.6,  'Y': 0.87,  'Z': 0.0, 'theta': -55.0,  'radius': 0.9},
-    {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
-    {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
-]
+GANGLION_SFREQ = GANGLION.sfreq
+GANGLION_N_CHANNELS = GANGLION.n_channels
+GANGLION_CH_LOCS = list(GANGLION.ch_locs)
 
-EVENT_ID = {
-    'congruent':    1,
-    'incongruent':  2,
-    'correct':      3,
-    'error':        4,
-    'no_response':  5,
-}
-CODE_NAME = {v: k for k, v in EVENT_ID.items()}
+EVENT_ID = MARKERS.event_id
+CODE_NAME = MARKERS.code_name
 
 
 def convert_ganglion_csv_to_set(csv_path: str) -> str:
@@ -58,26 +49,27 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
     except (ValueError, IndexError):
         pass
 
-    raw = df.iloc[:, 1:5].values.T.astype(np.float64)
-    raw = raw / 1e6   # uV -> V
+    eeg_start, eeg_end = GANGLION.eeg_cols[0], GANGLION.eeg_cols[-1] + 1
+    raw = df.iloc[:, eeg_start:eeg_end].values.T.astype(np.float64)
+    raw = raw * GANGLION.uv_to_v_scale
 
-    markers_raw = df.iloc[:, 14].values.astype(np.float64)
+    markers_raw = df.iloc[:, GANGLION.marker_col].values.astype(np.float64)
 
     n_channels = GANGLION_N_CHANNELS
     sfreq      = GANGLION_SFREQ
     n_samples  = raw.shape[1]
 
-    stim_codes  = {1, 2}
+    stim_codes = MARKERS.stimulus_codes
     stim_samples = [
         (i, int(markers_raw[i]))
         for i in range(n_samples)
         if markers_raw[i] in stim_codes
     ]
 
-    has_markers = len(stim_samples) >= 2
+    has_markers = len(stim_samples) >= EPOCH.min_stimulus_events
 
     if has_markers:
-        pre_ms, post_ms = 200, 800
+        pre_ms, post_ms = EPOCH.pre_stimulus_ms, EPOCH.post_stimulus_ms
         pre_samp  = int(pre_ms  / 1000 * sfreq)
         post_samp = int(post_ms / 1000 * sfreq)
         epoch_len = pre_samp + post_samp
@@ -97,7 +89,7 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
             epochs_list.append(epoch)
             event_rows.append([onset_sample, 0, code])
 
-        if len(epochs_list) < 2:
+        if len(epochs_list) < EPOCH.min_valid_epochs:
             has_markers = False
         else:
             epoched = np.stack(epochs_list, axis=0)
@@ -116,7 +108,7 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
 
             EEG = {
                 'data':    data_3d,
-                'setname': 'Flanker_ErrP',
+                'setname': EPOCH.epoched_set_name,
                 'nbchan':  n_channels,
                 'pnts':    epoch_len,
                 'trials':  n_epochs,
@@ -125,7 +117,7 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
                 'xmax':    tmax_s,
                 'times':   (np.arange(epoch_len) / sfreq + tmin_s).tolist(),
                 'chanlocs': GANGLION_CH_LOCS,
-                'ref':     'common',
+                'ref':     EPOCH.eeglab_ref,
                 'event':   eeg_events,
                 'epoch':   [{'event': i + 1} for i in range(n_epochs)],
                 'eventdescription': list(CODE_NAME.values()),
@@ -141,7 +133,7 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
     if not has_markers:
         EEG = {
             'data':    raw.astype(np.float32),
-            'setname': 'Ganglion_Recording',
+            'setname': EPOCH.continuous_set_name,
             'nbchan':  n_channels,
             'pnts':    n_samples,
             'trials':  1,
@@ -150,13 +142,13 @@ def convert_ganglion_csv_to_set(csv_path: str) -> str:
             'xmax':    n_samples / sfreq,
             'times':   (np.arange(n_samples) / sfreq).tolist(),
             'chanlocs': GANGLION_CH_LOCS,
-            'ref':     'common',
+            'ref':     EPOCH.eeglab_ref,
         }
         logger.debug(
             f"No markers found — saved as continuous "
             f"({n_samples/sfreq:.1f}s, {n_samples} samples)"
         )
 
-    output_path = csv_path.replace('.csv', '_converted.set')
+    output_path = csv_path.replace('.csv', EPOCH.converted_suffix)
     savemat(output_path, {'EEG': EEG}, appendmat=False)
     return output_path

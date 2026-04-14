@@ -27,6 +27,7 @@ from matplotlib import patches
 from scipy import signal
 from scipy.interpolate import griddata
 
+from src.config import ERP, PLOT
 from src.gui.themes.colors import get_palette
 
 logger = logging.getLogger(__name__)
@@ -62,13 +63,13 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
         ax.xaxis.label.set_color(p.text)
         ax.yaxis.label.set_color(p.text)
         ax.title.set_color(p.text)
-        ax.grid(color=p.grid, alpha=0.3)
+        ax.grid(color=p.grid, alpha=PLOT.grid_alpha)
         for spine in ax.spines.values():
             spine.set_color(p.grid)
 
 
-ERN_WINDOW_MS = (50, 150)
-PE_WINDOW_MS = (200, 400)
+ERN_WINDOW_MS = ERP.ern_window_ms
+PE_WINDOW_MS = ERP.pe_window_ms
 
 
 def _add_erp_overlays(fig, ax, evoked):
@@ -179,7 +180,7 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, them
     if picks is None:
         picks = range(len(epochs.ch_names))
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=PLOT.epochs_figsize)
 
     for epoch_idx in range(epochs.data.shape[0]):
         for ch_idx in picks:
@@ -192,7 +193,7 @@ def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, them
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('Amplitude (uV)')
     ax.set_title(title or f'Epochs ({epochs.data.shape[0]} epochs)')
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=PLOT.grid_alpha)
 
     _apply_mpl_theme(fig, ax, theme=theme)
 
@@ -240,7 +241,7 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     if picks is None:
         picks = range(len(evoked.ch_names))
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=PLOT.evoked_figsize)
 
     if spatial_colors:
         colors = plt.cm.viridis(np.linspace(0, 1, len(picks)))
@@ -248,7 +249,7 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
         colors = None
 
     for idx, ch_idx in enumerate(picks):
-        label = evoked.ch_names[ch_idx] if len(picks) <= 20 else None
+        label = evoked.ch_names[ch_idx] if len(picks) <= PLOT.max_labeled_channels else None
         kwargs = dict(label=label, alpha=0.8)
         if colors is not None:
             kwargs['color'] = colors[idx]
@@ -270,12 +271,13 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('Amplitude (uV)')
     ax.set_title(window_title or 'Evoked Response (Average)')
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=PLOT.grid_alpha)
 
     _apply_mpl_theme(fig, ax, theme=theme)
 
-    if len(picks) <= 20:
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, framealpha=0.95)
+    if len(picks) <= PLOT.max_labeled_channels:
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),
+                  fontsize=PLOT.legend_fontsize, framealpha=PLOT.legend_framealpha)
     
     if show:
         plt.tight_layout()
@@ -322,7 +324,8 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
         times = [times]
 
     n_times = len(times)
-    fig, axes = plt.subplots(1, n_times, figsize=(4 * n_times, 4))
+    cs = PLOT.topo_cell_size
+    fig, axes = plt.subplots(1, n_times, figsize=(cs * n_times, cs))
     if n_times == 1:
         axes = [axes]
 
@@ -344,10 +347,10 @@ def plot_topomap(evoked, times, ch_type='eeg', colorbar=True,
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=axes, orientation='vertical',
-                          fraction=0.05, pad=0.04)
+                          fraction=PLOT.colorbar_fraction, pad=PLOT.colorbar_pad)
         cbar.set_label('Amplitude (uV)')
 
-    plt.suptitle('Topographic Maps', fontsize=14, y=0.95)
+    plt.suptitle('Topographic Maps', fontsize=PLOT.suptitle_fontsize, y=0.95)
 
     _apply_mpl_theme(fig, axes, theme=theme)
 
@@ -394,11 +397,11 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     """
     if times is None:
         gfp = np.std(evoked.data, axis=0)
-        peak_indices = signal.find_peaks(gfp, distance=int(0.05 * evoked.sfreq))[0]
+        peak_indices = signal.find_peaks(gfp, distance=int(PLOT.gfp_peak_distance_s * evoked.sfreq))[0]
         if len(peak_indices) > 0:
             times = evoked.times[peak_indices[:3]]
         else:
-            times = [0.1, 0.2, 0.3]
+            times = list(PLOT.default_topo_times)
 
     if not isinstance(times, (list, np.ndarray)):
         times = [times]
@@ -408,7 +411,7 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     t_max_s = evoked.times[-1]
 
     n_topos = len(times)
-    fig = plt.figure(figsize=(14, 8))
+    fig = plt.figure(figsize=PLOT.joint_figsize)
 
     gs = fig.add_gridspec(2, n_topos, height_ratios=[2, 1],
                          hspace=0.55, wspace=0.3)
@@ -428,7 +431,7 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
         channels_to_plot = list(range(len(evoked.ch_names)))
 
     for ch_idx in channels_to_plot:
-        label = evoked.ch_names[ch_idx] if len(channels_to_plot) <= 20 else None
+        label = evoked.ch_names[ch_idx] if len(channels_to_plot) <= PLOT.max_labeled_channels else None
         ax_ts.plot(evoked.times * 1000, evoked.data[ch_idx, :] * 1e6,
                   alpha=0.5, linewidth=0.8, label=label)
 
@@ -446,7 +449,7 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
     ax_ts.set_xlabel('Time (ms)')
     ax_ts.set_ylabel('Amplitude (uV)')
     ax_ts.set_title(title or 'Evoked Response with Topographic Maps')
-    ax_ts.grid(True, alpha=0.3)
+    ax_ts.grid(True, alpha=PLOT.grid_alpha)
 
     # ---- Events / response band overlays ----
     if display_events_responses:
@@ -621,8 +624,10 @@ def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
         sensors (bool): Draw black dots at electrode positions.
         contours (int): Number of contour fill levels.
     """
-    xi = np.linspace(pos[:, 0].min() - 0.1, pos[:, 0].max() + 0.1, 100)
-    yi = np.linspace(pos[:, 1].min() - 0.1, pos[:, 1].max() + 0.1, 100)
+    margin = PLOT.topo_margin
+    res = PLOT.topo_grid_resolution
+    xi = np.linspace(pos[:, 0].min() - margin, pos[:, 0].max() + margin, res)
+    yi = np.linspace(pos[:, 1].min() - margin, pos[:, 1].max() + margin, res)
     Xi, Yi = np.meshgrid(xi, yi)
 
     Zi = griddata(pos, data, (Xi, Yi), method='cubic')
@@ -631,12 +636,11 @@ def _plot_topomap_single(data, pos, ax, title='', cmap='RdBu_r',
     im = ax.contourf(Xi, Yi, Zi, levels=contours, cmap=cmap,
                     vmin=-vmax, vmax=vmax)
 
-    head_radius = 1.0
-    circle = patches.Circle((0, 0), head_radius, fill=False,
+    circle = patches.Circle((0, 0), PLOT.head_radius, fill=False,
                            edgecolor='k', linewidth=2)
     ax.add_patch(circle)
 
-    nose = patches.Wedge((0, head_radius), 0.2, 60, 120,
+    nose = patches.Wedge((0, PLOT.head_radius), PLOT.nose_length, 60, 120,
                         facecolor='k', edgecolor='k')
     ax.add_patch(nose)
 
@@ -694,7 +698,7 @@ def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
     data = evoked.data[:, time_idx] * 1e6
 
     if fig is None:
-        fig = plt.figure(figsize=(6, 5))
+        fig = plt.figure(figsize=PLOT.topo_frame_figsize)
     else:
         fig.clear()
 
@@ -702,18 +706,20 @@ def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
 
     vmax = global_vmax if global_vmax is not None else np.abs(data).max()
 
-    xi = np.linspace(pos[:, 0].min() - 0.1, pos[:, 0].max() + 0.1, 100)
-    yi = np.linspace(pos[:, 1].min() - 0.1, pos[:, 1].max() + 0.1, 100)
+    margin = PLOT.topo_margin
+    res = PLOT.topo_grid_resolution
+    xi = np.linspace(pos[:, 0].min() - margin, pos[:, 0].max() + margin, res)
+    yi = np.linspace(pos[:, 1].min() - margin, pos[:, 1].max() + margin, res)
     Xi, Yi = np.meshgrid(xi, yi)
     Zi = griddata(pos, data, (Xi, Yi), method='cubic')
 
     ax.contourf(Xi, Yi, Zi, levels=contours, cmap=cmap,
                 vmin=-vmax, vmax=vmax)
 
-    circle = patches.Circle((0, 0), 1.0, fill=False,
+    circle = patches.Circle((0, 0), PLOT.head_radius, fill=False,
                             edgecolor='k', linewidth=2)
     ax.add_patch(circle)
-    nose = patches.Wedge((0, 1.0), 0.2, 60, 120,
+    nose = patches.Wedge((0, PLOT.head_radius), PLOT.nose_length, 60, 120,
                          facecolor='k', edgecolor='k')
     ax.add_patch(nose)
 
@@ -725,9 +731,9 @@ def plot_topomap_frame(evoked, time, fig=None, cmap='RdBu_r',
     ax.set_aspect('equal')
     ax.set_anchor('C')
     ax.axis('off')
-    ax.set_title(f'{actual_time * 1000:.1f} ms', fontsize=14)
+    ax.set_title(f'{actual_time * 1000:.1f} ms', fontsize=PLOT.suptitle_fontsize)
 
-    fig.suptitle('Topographic Map', fontsize=14, y=0.96)
+    fig.suptitle('Topographic Map', fontsize=PLOT.suptitle_fontsize, y=0.96)
 
     # Set subplot margins BEFORE colorbar so the colorbar steals from the
     # right edge of a centred region and set_anchor('C') is not overridden.
