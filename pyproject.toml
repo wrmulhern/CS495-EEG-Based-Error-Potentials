@@ -12,6 +12,7 @@ dependencies = [
     "pyqt5>=5.15.10",
     "pyserial>=3.5",
     "scipy>=1.15.3",
+    "setuptools<82",
 ]
 
 [tool.uv]
