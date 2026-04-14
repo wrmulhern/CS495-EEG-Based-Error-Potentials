@@ -74,6 +74,96 @@ def _apply_mpl_theme(fig, axes, theme: str = "light"):
             spine.set_color(grid_color)
 
 
+ERN_WINDOW_MS = (50, 150)
+PE_WINDOW_MS = (200, 400)
+
+
+def _add_erp_overlays(fig, ax, evoked):
+    """Add ERN/Pe shaded bands and hover-activated annotations to *ax*.
+
+    Draws the ERN (50-150 ms, blue) and Pe (200-400 ms, green) windows
+    with boundary lines, shaded spans, and hidden annotation boxes that
+    become visible when the mouse hovers over the corresponding region.
+    """
+    time_min_ms = evoked.times[0] * 1000
+    time_max_ms = evoked.times[-1] * 1000
+
+    if time_min_ms <= 0 <= time_max_ms:
+        ax.axvline(0, color='red', linestyle='--', linewidth=2,
+                   label='Event', zorder=5)
+
+    ern_start, ern_end = ERN_WINDOW_MS
+    ern_annotation = None
+    if ern_start < time_max_ms and ern_end > time_min_ms:
+        ern_display_start = max(ern_start, time_min_ms)
+        ern_display_end = min(ern_end, time_max_ms)
+        if time_min_ms <= ern_start <= time_max_ms:
+            ax.axvline(ern_start, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
+        if time_min_ms <= ern_end <= time_max_ms:
+            ax.axvline(ern_end, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
+        ax.axvspan(ern_display_start, ern_display_end, alpha=0.15, color='lightblue', zorder=1)
+        ern_annotation = ax.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
+                                     xy=((ern_display_start + ern_display_end) / 2, 0),
+                                     xytext=((ern_display_start + ern_display_end) / 2,
+                                            ax.get_ylim()[0] * 0.7),
+                                     ha='center', va='bottom', fontsize=10, color='darkblue',
+                                     bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                              edgecolor='blue', alpha=0.95, linewidth=2),
+                                     visible=False, zorder=10)
+
+    pe_start, pe_end = PE_WINDOW_MS
+    pe_annotation = None
+    if pe_start < time_max_ms and pe_end > time_min_ms:
+        pe_display_start = max(pe_start, time_min_ms)
+        pe_display_end = min(pe_end, time_max_ms)
+        if time_min_ms <= pe_start <= time_max_ms:
+            ax.axvline(pe_start, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
+        if time_min_ms <= pe_end <= time_max_ms:
+            ax.axvline(pe_end, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
+        ax.axvspan(pe_display_start, pe_display_end, alpha=0.15, color='lightgreen', zorder=1)
+        pe_annotation = ax.annotate('Pe\n(200-400ms)\nPositive peak',
+                                    xy=((pe_display_start + pe_display_end) / 2, 0),
+                                    xytext=((pe_display_start + pe_display_end) / 2,
+                                           ax.get_ylim()[1] * 0.7),
+                                    ha='center', va='top', fontsize=10, color='darkgreen',
+                                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
+                                             edgecolor='green', alpha=0.95, linewidth=2),
+                                    visible=False, zorder=10)
+
+    if ern_annotation is not None or pe_annotation is not None:
+        def on_hover(event):
+            if event.inaxes != ax:
+                if ern_annotation and ern_annotation.get_visible():
+                    ern_annotation.set_visible(False)
+                    fig.canvas.draw_idle()
+                if pe_annotation and pe_annotation.get_visible():
+                    pe_annotation.set_visible(False)
+                    fig.canvas.draw_idle()
+                return
+            mouse_x = event.xdata
+            if ern_annotation and ern_start <= mouse_x <= ern_end:
+                ern_annotation.set_visible(True)
+                if pe_annotation:
+                    pe_annotation.set_visible(False)
+                fig.canvas.draw_idle()
+            elif pe_annotation and pe_start <= mouse_x <= pe_end:
+                if ern_annotation:
+                    ern_annotation.set_visible(False)
+                pe_annotation.set_visible(True)
+                fig.canvas.draw_idle()
+            else:
+                changed = False
+                if ern_annotation and ern_annotation.get_visible():
+                    ern_annotation.set_visible(False)
+                    changed = True
+                if pe_annotation and pe_annotation.get_visible():
+                    pe_annotation.set_visible(False)
+                    changed = True
+                if changed:
+                    fig.canvas.draw_idle()
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
+
+
 def plot_epochs(epochs, picks=None, scalings='auto', title=None, show=True, theme: str = "light"):
     """Butterfly plot: overlay every epoch/channel trace on a single axis.
 
@@ -182,83 +272,7 @@ def plot_evoked(evoked, picks=None, spatial_colors=False, gfp=False,
     ax.axhline(0, color='k', linestyle='-', linewidth=0.5, alpha=0.5)
 
     if display_events_responses:
-        time_min_ms = evoked.times[0] * 1000
-        time_max_ms = evoked.times[-1] * 1000
-
-        if time_min_ms <= 0 <= time_max_ms:
-            ax.axvline(0, color='red', linestyle='--', linewidth=2,
-                       label='Event', zorder=5)
-
-        ern_start, ern_end = 50, 150
-        ern_annotation = None
-        if ern_start < time_max_ms and ern_end > time_min_ms:
-            ern_display_start = max(ern_start, time_min_ms)
-            ern_display_end = min(ern_end, time_max_ms)
-            if time_min_ms <= ern_start <= time_max_ms:
-                ax.axvline(ern_start, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
-            if time_min_ms <= ern_end <= time_max_ms:
-                ax.axvline(ern_end, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
-            ax.axvspan(ern_display_start, ern_display_end, alpha=0.15, color='lightblue', zorder=1)
-            ern_annotation = ax.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
-                                         xy=((ern_display_start + ern_display_end) / 2, 0),
-                                         xytext=((ern_display_start + ern_display_end) / 2,
-                                                ax.get_ylim()[0] * 0.7),
-                                         ha='center', va='bottom', fontsize=10, color='darkblue',
-                                         bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
-                                                  edgecolor='blue', alpha=0.95, linewidth=2),
-                                         visible=False, zorder=10)
-
-        pe_start, pe_end = 200, 400
-        pe_annotation = None
-        if pe_start < time_max_ms and pe_end > time_min_ms:
-            pe_display_start = max(pe_start, time_min_ms)
-            pe_display_end = min(pe_end, time_max_ms)
-            if time_min_ms <= pe_start <= time_max_ms:
-                ax.axvline(pe_start, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
-            if time_min_ms <= pe_end <= time_max_ms:
-                ax.axvline(pe_end, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
-            ax.axvspan(pe_display_start, pe_display_end, alpha=0.15, color='lightgreen', zorder=1)
-            pe_annotation = ax.annotate('Pe\n(200-400ms)\nPositive peak',
-                                        xy=((pe_display_start + pe_display_end) / 2, 0),
-                                        xytext=((pe_display_start + pe_display_end) / 2,
-                                               ax.get_ylim()[1] * 0.7),
-                                        ha='center', va='top', fontsize=10, color='darkgreen',
-                                        bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
-                                                 edgecolor='green', alpha=0.95, linewidth=2),
-                                        visible=False, zorder=10)
-
-        if ern_annotation is not None or pe_annotation is not None:
-            def on_hover(event):
-                if event.inaxes != ax:
-                    if ern_annotation and ern_annotation.get_visible():
-                        ern_annotation.set_visible(False)
-                        fig.canvas.draw_idle()
-                    if pe_annotation and pe_annotation.get_visible():
-                        pe_annotation.set_visible(False)
-                        fig.canvas.draw_idle()
-                    return
-                mouse_x = event.xdata
-                if ern_annotation and ern_start <= mouse_x <= ern_end:
-                    ern_annotation.set_visible(True)
-                    if pe_annotation:
-                        pe_annotation.set_visible(False)
-                    fig.canvas.draw_idle()
-                elif pe_annotation and pe_start <= mouse_x <= pe_end:
-                    if ern_annotation:
-                        ern_annotation.set_visible(False)
-                    pe_annotation.set_visible(True)
-                    fig.canvas.draw_idle()
-                else:
-                    changed = False
-                    if ern_annotation and ern_annotation.get_visible():
-                        ern_annotation.set_visible(False)
-                        changed = True
-                    if pe_annotation and pe_annotation.get_visible():
-                        pe_annotation.set_visible(False)
-                        changed = True
-                    if changed:
-                        fig.canvas.draw_idle()
-            fig.canvas.mpl_connect('motion_notify_event', on_hover)
+        _add_erp_overlays(fig, ax, evoked)
 
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('Amplitude (uV)')
@@ -443,80 +457,7 @@ def plot_joint(evoked, times=None, title='', ts_args=None,
 
     # ---- Events / response band overlays ----
     if display_events_responses:
-        if time_min_ms <= 0 <= time_max_ms:
-            ax_ts.axvline(0, color='red', linestyle='--', linewidth=2,
-                           label='Event', zorder=5)
-
-        ern_start, ern_end = 50, 150
-        ern_annotation = None
-        if ern_start < time_max_ms and ern_end > time_min_ms:
-            ern_display_start = max(ern_start, time_min_ms)
-            ern_display_end = min(ern_end, time_max_ms)
-            if time_min_ms <= ern_start <= time_max_ms:
-                ax_ts.axvline(ern_start, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
-            if time_min_ms <= ern_end <= time_max_ms:
-                ax_ts.axvline(ern_end, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
-            ax_ts.axvspan(ern_display_start, ern_display_end, alpha=0.15, color='lightblue', zorder=1)
-            ern_annotation = ax_ts.annotate('ERN/Ne\n(50-150ms)\nNegative peak',
-                                             xy=((ern_display_start + ern_display_end) / 2, 0),
-                                             xytext=((ern_display_start + ern_display_end) / 2,
-                                                    ax_ts.get_ylim()[0] * 0.7),
-                                             ha='center', va='bottom', fontsize=10, color='darkblue',
-                                             bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
-                                                      edgecolor='blue', alpha=0.95, linewidth=2),
-                                             visible=False, zorder=10)
-
-        pe_start, pe_end = 200, 400
-        pe_annotation = None
-        if pe_start < time_max_ms and pe_end > time_min_ms:
-            pe_display_start = max(pe_start, time_min_ms)
-            pe_display_end = min(pe_end, time_max_ms)
-            if time_min_ms <= pe_start <= time_max_ms:
-                ax_ts.axvline(pe_start, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
-            if time_min_ms <= pe_end <= time_max_ms:
-                ax_ts.axvline(pe_end, color='green', linestyle='--', linewidth=1.5, alpha=0.7)
-            ax_ts.axvspan(pe_display_start, pe_display_end, alpha=0.15, color='lightgreen', zorder=1)
-            pe_annotation = ax_ts.annotate('Pe\n(200-400ms)\nPositive peak',
-                                            xy=((pe_display_start + pe_display_end) / 2, 0),
-                                            xytext=((pe_display_start + pe_display_end) / 2,
-                                                   ax_ts.get_ylim()[1] * 0.7),
-                                            ha='center', va='top', fontsize=10, color='darkgreen',
-                                            bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
-                                                     edgecolor='green', alpha=0.95, linewidth=2),
-                                            visible=False, zorder=10)
-
-        if ern_annotation is not None or pe_annotation is not None:
-            def on_hover(event):
-                if event.inaxes != ax_ts:
-                    if ern_annotation and ern_annotation.get_visible():
-                        ern_annotation.set_visible(False)
-                        fig.canvas.draw_idle()
-                    if pe_annotation and pe_annotation.get_visible():
-                        pe_annotation.set_visible(False)
-                        fig.canvas.draw_idle()
-                    return
-                mouse_x = event.xdata
-                if ern_annotation and ern_start <= mouse_x <= ern_end:
-                    ern_annotation.set_visible(True)
-                    if pe_annotation:
-                        pe_annotation.set_visible(False)
-                    fig.canvas.draw_idle()
-                elif pe_annotation and pe_start <= mouse_x <= pe_end:
-                    if ern_annotation:
-                        ern_annotation.set_visible(False)
-                    pe_annotation.set_visible(True)
-                    fig.canvas.draw_idle()
-                else:
-                    changed = False
-                    if ern_annotation and ern_annotation.get_visible():
-                        ern_annotation.set_visible(False)
-                        changed = True
-                    if pe_annotation and pe_annotation.get_visible():
-                        pe_annotation.set_visible(False)
-                        changed = True
-                    if changed:
-                        fig.canvas.draw_idle()
-            fig.canvas.mpl_connect('motion_notify_event', on_hover)
+        _add_erp_overlays(fig, ax_ts, evoked)
 
     # ---- Topomap row (bottom) ----
     if evoked.ch_locs is not None:

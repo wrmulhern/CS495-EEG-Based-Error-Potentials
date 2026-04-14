@@ -1,15 +1,8 @@
 """
 Main application window and per-file tab widget for the ErrP Visualizer.
 
-This module contains the entire desktop GUI layer built on PyQt5 and
-Matplotlib:
-
 Classes
 -------
-* :class:`MultiSelectItemDelegate` / :class:`MultiSelectDropdown` —
-  custom multi-select channel picker with checkbox-style toggling.
-* :class:`HelpDialog` — modal dialog that fetches and renders the
-  GitHub README (falls back to embedded HTML content on network failure).
 * :class:`FileTab` — self-contained widget for a single loaded EEG
   file.  Owns the Matplotlib canvas, all "Graph Options" controls, the
   animated-topomap playback logic, and lazy data loading.
@@ -39,14 +32,12 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt, QUrl, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices, QColor
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -54,14 +45,9 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QSpacerItem,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
     QTabWidget,
@@ -71,423 +57,23 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
 )
 
-from src.data_processing.data_loader import read_epochs_eeglab_minimal, read_csv_data
+from src.data_processing.data_loader import read_epochs_eeglab_minimal
 from src.data_processing.file_validator import FileValidator, FileValidationError
 from src.data_processing.data_processor import average_epochs, select_time_window
-from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint, plot_topomap_frame
+from src.data_processing.csv_converter import convert_ganglion_csv_to_set
+from src.data_visualization.visualizer import (
+    plot_evoked, plot_topomap, plot_joint, plot_topomap_frame,
+    _apply_mpl_theme,
+)
 from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
+from .utils.multi_select import MultiSelectDropdown, MultiSelectItemDelegate
+from .help_dialog import HelpDialog
 from .themes.light_theme import apply_light_theme
 from .themes.dark_theme import apply_dark_theme
 from .flanker_window import FlankerWindow
 
-import urllib.request
-import threading
-
 logger = logging.getLogger(__name__)
-
-# LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
-README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-Potentials/main/README.md" #readme link that our help dialog reads from
-
-#
-#
-# MULTI-SELECT DROPDOWN WIDGET
-#
-#
-class MultiSelectItemDelegate:
-    """Utility for styling ``QListWidgetItem`` rows in the channel picker.
-
-    Selected items get a blue (#1a73e8) background with white text;
-    deselected items revert to the default white/black colours.  Used
-    exclusively by :class:`MultiSelectDropdown`.
-    """
-    @staticmethod
-    def update_item_style(item: QListWidgetItem, is_selected: bool):
-        """Set the foreground and background colours of *item*."""
-        if is_selected:
-            item.setBackground(QColor("#1a73e8"))
-            item.setForeground(QColor("#ffffff"))
-        else:
-            item.setBackground(QColor(Qt.white))
-            item.setForeground(QColor(Qt.black))
-
-
-class MultiSelectDropdown(QWidget):
-    """Custom multi-select dropdown for EEG channel selection.
-
-    Presents a ``QPushButton`` that, when clicked, opens a popup
-    ``QListWidget``.  Items are toggled individually with a single
-    click; the first item (``"All Channels"``) acts as a select-all /
-    deselect-all toggle.  The popup closes on *Enter*, *Escape*, or
-    focus loss.
-
-    Signals:
-        selectionChanged(list[str]): Emitted whenever the selection
-            set changes.
-        confirmed(): Emitted when the popup is dismissed (used to mark
-            the Visualize button as needing re-run).
-    """
-    selectionChanged = pyqtSignal(list)
-    confirmed = pyqtSignal()
-
-    def __init__(self, items: List[str], parent=None):
-        super().__init__(parent)
-        self.items = items
-        self.selected = set()
-        self.is_open = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Button to show/hide dropdown
-        self.button = QPushButton("All Channels")
-        self.button.setStyleSheet("text-align: left; padding-left: 8px;")
-        self.button.clicked.connect(self.toggle_dropdown)
-        layout.addWidget(self.button)
-
-        # Dropdown frame (initially hidden)
-        self.dropdown_frame = QFrame()
-        self.dropdown_frame.setFrameShape(QFrame.StyledPanel)
-        self.dropdown_frame.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-
-        dropdown_layout = QVBoxLayout(self.dropdown_frame)
-        dropdown_layout.setContentsMargins(0, 0, 0, 0)
-        dropdown_layout.setSpacing(0)
-
-        # List widget with items
-        self.list_widget = QListWidget()
-        self.list_widget.setMaximumHeight(250)
-        self.list_widget.setSelectionMode(QListWidget.NoSelection)  # Disable blue highlight
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
-
-        # Store the original keyPressEvent method and override it
-        self._original_list_keypress = self.list_widget.keyPressEvent
-        self.list_widget.keyPressEvent = self._on_list_key_press
-
-        for i, item_text in enumerate(items):
-            item = QListWidgetItem(item_text)
-            self.list_widget.addItem(item)
-
-        dropdown_layout.addWidget(self.list_widget)
-        self.dropdown_frame.setLayout(dropdown_layout)
-        self.dropdown_frame.hide()
-
-        # Install event filter to detect when dropdown loses focus
-        self.dropdown_frame.installEventFilter(self)
-
-    def toggle_dropdown(self):
-        """Show the popup if hidden, or hide it if visible."""
-        if self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        else:
-            self.open_dropdown()
-
-    def open_dropdown(self):
-        """Show the dropdown below the button."""
-        # Position below button
-        pos = self.button.mapToGlobal(self.button.rect().bottomLeft())
-        self.dropdown_frame.move(pos)
-        self.dropdown_frame.resize(self.button.width(), 250)
-        self.dropdown_frame.show()
-        self.list_widget.setFocus()
-        self.is_open = True  # Set flag after showing
-
-    def close_dropdown(self):
-        """Hide the dropdown and confirm the selection."""
-        self.dropdown_frame.hide()
-        self.is_open = False  # Set flag after hiding
-        self.confirmed.emit()
-
-    def _on_item_clicked(self, item: QListWidgetItem):
-        """Toggle the clicked item and synchronise the "All Channels" state."""
-        idx = self.list_widget.row(item)
-        item_text = self.items[idx]
-
-        # Special handling for "All Channels"
-        if item_text == "All Channels":
-            # If "All Channels" is currently selected
-            if item_text in self.selected:
-                # Deselect all items
-                self.selected.clear()
-                for i in range(self.list_widget.count()):
-                    list_item = self.list_widget.item(i)
-                    MultiSelectItemDelegate.update_item_style(list_item, False)
-            else:
-                # Select all items
-                self.selected = set(self.items)
-                for i in range(self.list_widget.count()):
-                    list_item = self.list_widget.item(i)
-                    MultiSelectItemDelegate.update_item_style(list_item, True)
-        else:
-            # Regular item clicked - toggle selection
-            is_currently_selected = item_text in self.selected
-
-            if is_currently_selected:
-                self.selected.discard(item_text)
-            else:
-                self.selected.add(item_text)
-
-            # Update styling for this item
-            MultiSelectItemDelegate.update_item_style(item, not is_currently_selected)
-
-            # Check if all items (excluding "All Channels") are selected
-            all_items = set(self.items[1:])  # Skip "All Channels"
-            individual_selected = self.selected.copy()
-            individual_selected.discard("All Channels")
-
-            all_checkbox = self.list_widget.item(0)
-            if individual_selected == all_items:
-                self.selected.add("All Channels")
-                MultiSelectItemDelegate.update_item_style(all_checkbox, True)
-            else:
-                self.selected.discard("All Channels")
-                MultiSelectItemDelegate.update_item_style(all_checkbox, False)
-
-        self.selectionChanged.emit(list(self.selected))
-        self._update_button_text()
-
-    def _on_list_key_press(self, event):
-        """Close the popup on Enter / Escape; delegate other keys."""
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-            self.close_dropdown()
-        elif event.key() == Qt.Key_Escape:
-            self.close_dropdown()
-        else:
-            self._original_list_keypress(event)
-
-    def eventFilter(self, obj, event):
-        """Auto-close the popup when the dropdown frame loses focus."""
-        if obj == self.dropdown_frame:
-            if event.type() == 3:  # QEvent.FocusOut
-                if self.dropdown_frame.isVisible():
-                    self.close_dropdown()
-                    return True
-        return super().eventFilter(obj, event)
-
-    def _update_button_text(self):
-        """Summarise the current selection on the dropdown button face."""
-        if not self.selected:
-            text = "No Selection"
-        elif "All Channels" in self.selected and len(self.selected) == len(self.items):
-            text = "All Channels"
-        else:
-            # Show count or abbreviated list
-            if len(self.selected) == 1:
-                text = list(self.selected)[0]
-            else:
-                text = f"{len(self.selected)} selected"
-        self.button.setText(text)
-
-    def get_selected(self) -> List[str]:
-        """Return the currently selected channel names."""
-        return list(self.selected)
-
-    def set_items(self, items: List[str]):
-        """Replace the available items and clear the selection."""
-        self.items = items
-        self.list_widget.clear()
-        self.selected.clear()
-
-        for item_text in items:
-            item = QListWidgetItem(item_text)
-            self.list_widget.addItem(item)
-
-        self._update_button_text()
-
-    def keyPressEvent(self, event):
-        """Handle Escape key to close dropdown."""
-        if event.key() == Qt.Key_Escape and self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        else:
-            super().keyPressEvent(event)
-
-    def focusOutEvent(self, event):
-        """Close dropdown when parent widget loses focus."""
-        if self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        super().focusOutEvent(event)
-
-#
-#
-# HELP DIALOG
-#
-#
-class HelpDialog(QDialog):
-    """Modal help dialog accessible from the top-bar "? Help" button.
-
-    On open, a background thread fetches the project README from
-    GitHub (:data:`README_URL`) and renders it as HTML via the
-    ``markdown`` package (if installed) or a regex-based fallback.
-    While the fetch is in flight the dialog shows a "Loading…" message
-    so it opens instantly.  If the network request fails, the dialog
-    falls back to :attr:`_CONTENT`, an embedded HTML quick-start guide.
-
-    The dialog respects the current light / dark theme.
-    """
-
-    _CONTENT = """
-<h2 style="margin-top:0;">ErrP Visualizer &mdash; Quick Guide</h2>
-
-<h3>What is an ErrP?</h3>
-<p>An <b>Error-Related Potential (ErrP)</b> is a brain signal that appears in EEG when
-a person perceives or makes an error. Two main components:</p>
-<ul>
-  <li><b>ERN / Ne</b> (50&ndash;150 ms) &mdash; negative deflection shortly after the error,
-      generated in the anterior cingulate cortex.</li>
-  <li><b>Pe</b> (200&ndash;400 ms) &mdash; positive deflection reflecting conscious error awareness.</li>
-</ul>
-
-<h3>End-to-end workflow</h3>
-<ol>
-  <li>Click <b>Record EEG</b> in the top bar. This opens a web application where you can run
-      a <b>Flanker Task</b> &mdash; a standard cognitive paradigm that reliably elicits ErrP
-      signals using a connected BCI headset.</li>
-  <li>Complete the task. The web app exports your session as a <b>.set</b> or <b>.csv</b> file.</li>
-  <li>Drop that file into this app to visualize your ErrP.</li>
-</ol>
-
-<h3>Loading files</h3>
-<ul>
-  <li>Drag and drop one or more files onto the drop zone, or click <b>Browse (&hellip;)</b>.</li>
-  <li><b>.set</b> files are loaded directly. <b>.csv</b> files (e.g. from OpenBCI Ganglion)
-      are <b>automatically converted</b> to .set format &mdash; no manual steps required.
-      A converted file is saved alongside the original CSV.</li>
-  <li>Each file opens in its own <b>tab</b>. Tabs are fully independent.</li>
-  <li>Files load <b>lazily</b>: data is only read when you first click <b>Visualize</b> on that tab.</li>
-  <li>Close a single tab with its <b>&times;</b> button, or remove all tabs with <b>Clear All</b>.</li>
-</ul>
-
-<h3>Graph types</h3>
-<ul>
-  <li><b>ErrP Time Series</b> &mdash; averaged ERP waveform across all (or selected) channels.
-      Best for inspecting the ERN and Pe components over time.</li>
-  <li><b>Topographic Map</b> &mdash; scalp voltage map at up to three time points.
-      Requires &ge;19 channels. The epoch window is fixed to the full range.</li>
-  <li><b>Joint Maps</b> &mdash; time series and topomaps combined in one figure.
-      Topomap times outside the epoch window show as <i>Out of range</i> placeholders.</li>
-</ul>
-
-<h3>Graph options</h3>
-<ul>
-  <li><b>Epoch (ms)</b> &mdash; crop the time axis. Leave blank for the full epoch.
-      Disabled automatically for Topographic Map.</li>
-  <li><b>Sensor</b> &mdash; plot a single channel instead of all channels (Time Series only).</li>
-  <li><b>Topomap times (s)</b> &mdash; three time points (in seconds) for the scalp maps.</li>
-  <li><b>Display Events and Responses</b> &mdash; overlays the ERN window (blue, 50&ndash;150 ms)
-      and Pe window (green, 200&ndash;400 ms) with hover-activated labels.</li>
-</ul>
-
-<h3>Downloading a graph</h3>
-<p>Click <b>Download Graph</b> in the bottom bar to save the currently displayed figure
-as a high-resolution PNG (300&thinsp;dpi).</p>
-
-<h3>Dark mode</h3>
-<p>Toggle <b>Dark mode</b> in the top bar. The theme applies to both the Qt UI and the
-embedded Matplotlib figures.</p>
-
-<h3>Supported file formats</h3>
-<ul>
-  <li><b>EEGLAB .set</b> &mdash; epoched data with &ge;2 trials. Companion <b>.fdt</b> files
-      are handled automatically.</li>
-  <li><b>.csv</b> &mdash; OpenBCI Ganglion format. Automatically converted to .set on load.</li>
-</ul>
-"""
-
-    def __init__(self, is_dark: bool = False, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Help — ErrP Visualizer")
-        self.setMinimumSize(620, 520)
-        self.resize(660, 560)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 16)
-        layout.setSpacing(12)
-
-        self.browser = QTextBrowser()
-        self.browser.setOpenExternalLinks(True)
-        self.browser.setFrameShape(QFrame.NoFrame)
-        self.browser.setHtml("<p style='color:gray;'>Loading README from GitHub…</p>")
-        layout.addWidget(self.browser, stretch=1)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
-        btn_box.rejected.connect(self.accept)
-        layout.addWidget(btn_box)
-
-        self._apply_theme(is_dark)
-
-        # Fetch README in background thread so dialog opens instantly
-        self._is_dark = is_dark
-        t = threading.Thread(target=self._load_readme, daemon=True)
-        t.start()
-
-    def _load_readme(self):
-        """Background worker: fetch, convert, and inject the README HTML."""
-        try:
-            req = urllib.request.Request(
-                README_URL,
-                headers={"User-Agent": "ErrP-Visualizer"}
-            )
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                md_text = resp.read().decode("utf-8")
-            html = self._md_to_html(md_text)
-        except Exception:
-            html = self._CONTENT  # fallback to hardcoded content
-
-        # Update UI on main thread
-        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
-        QMetaObject.invokeMethod(
-            self.browser, "setHtml",
-            Qt.QueuedConnection,
-            Q_ARG(str, html)
-        )
-
-    @staticmethod
-    def _md_to_html(md: str) -> str:
-        """Convert Markdown text to HTML, with a regex fallback if ``markdown`` is not installed."""
-        try:
-            import markdown
-            return markdown.markdown(md, extensions=["fenced_code", "tables"])
-        except ImportError:
-            pass
-
-        # Basic fallback: handle headings, bold, code, links, bullets
-        import re
-        html = md
-        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-        html = re.sub(r'^## (.+)$',  r'<h2>\1</h2>', html, flags=re.MULTILINE)
-        html = re.sub(r'^# (.+)$',   r'<h1>\1</h1>', html, flags=re.MULTILINE)
-        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
-        html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-        html = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', html)
-        html = re.sub(r'^\s*[-*] (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
-        html = re.sub(r'(<li>.*</li>\n?)+', r'<ul>\g<0></ul>', html)
-        html = re.sub(r'\n\n+', '</p><p>', html)
-        return f"<p>{html}</p>"
-
-    def _apply_theme(self, is_dark: bool):
-        if is_dark:
-            self.setStyleSheet(
-                "QDialog { background: #1e1e1e; }"
-                "QTextBrowser { background: #1e1e1e; color: #e8eaed; border: none; font-size: 13px; }"
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-            )
-        else:
-            self.setStyleSheet(
-                "QDialog { background: #ffffff; }"
-                "QTextBrowser { background: #ffffff; color: #202124; border: none; font-size: 13px; }"
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-            )
-
-#
-#
-# FileTab: Class for each tab (file) that will be owned in FileWindow
-#
-#
 class FileTab(QWidget):
     """Self-contained tab widget for a single loaded ``.set`` file.
 
@@ -552,7 +138,7 @@ class FileTab(QWidget):
         root.addWidget(options_box, stretch=1)
 
         # Apply initial theme
-        self._apply_mpl_theme(self.figure)
+        self._apply_mpl_theme_to_fig(self.figure)
 
 
     def _build_graph_frame(self) -> QFrame:
@@ -1008,32 +594,30 @@ class FileTab(QWidget):
                         item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
                         MultiSelectItemDelegate.update_item_style(item, True)
                 self.sensor_combo.selected = set(self._last_time_series_selection)
-                self.sensor_combo._update_button_text()
+                self.sensor_combo.update_button_text()
             else:
-                # Default to "All Channels"
-                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
-                MultiSelectItemDelegate.update_item_style(item, True)
-                self.sensor_combo.selected = {"All Channels"}
-                self.sensor_combo._update_button_text()
+                self._restore_default_sensor_selection()
         else:
             # Time Series mode
             self.sensor_combo.set_items(self._all_sensors if self._all_sensors else ["All Channels"])
             if self._last_time_series_selection and any(s in self._all_sensors for s in self._last_time_series_selection):
-                # Restore previous selections for Time Series
                 for sensor in self._last_time_series_selection:
                     if sensor in self._all_sensors:
                         item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
                         MultiSelectItemDelegate.update_item_style(item, True)
                 self.sensor_combo.selected = set(self._last_time_series_selection)
-                self.sensor_combo._update_button_text()
+                self.sensor_combo.update_button_text()
             else:
-                # Default to "All Channels"
-                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
-                MultiSelectItemDelegate.update_item_style(item, True)
-                self.sensor_combo.selected = {"All Channels"}
-                self.sensor_combo._update_button_text()
+                self._restore_default_sensor_selection()
 
         self._last_graph_type = graph_type
+
+    def _restore_default_sensor_selection(self):
+        """Set sensor dropdown to "All Channels" and update the button text."""
+        item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
+        MultiSelectItemDelegate.update_item_style(item, True)
+        self.sensor_combo.selected = {"All Channels"}
+        self.sensor_combo.update_button_text()
 
     def _set_epoch_field_style(self, disabled: bool):
         """Apply greyed-out or active styling to the epoch start/end fields."""
@@ -1322,33 +906,18 @@ class FileTab(QWidget):
         if self._anim_evoked is not None:
             self._on_anim_slider_changed(self.anim_slider.value())
         else:
-            self._apply_mpl_theme(self.figure)
+            self._apply_mpl_theme_to_fig(self.figure)
             self.canvas.draw_idle()
 
         # Update button appearance
         self.reset_visualize_button()
 
-    def _apply_mpl_theme(self, fig: Figure):
+    def _apply_mpl_theme_to_fig(self, fig: Figure):
         """Apply the current light/dark palette to a static Matplotlib figure."""
         if fig is None:
             return
-        if self._is_dark_mode:
-            bg, axis_bg, text, grid = "#121212", "#121212", "#e8eaed", "#3c4043"
-        else:
-            bg, axis_bg, text, grid = "#ffffff", "#ffffff", "#202124", "#dadce0"
-
-        fig.patch.set_facecolor(bg)
-        if hasattr(fig, "_suptitle") and fig._suptitle is not None:
-            fig._suptitle.set_color(text)
-        for ax in fig.get_axes():
-            ax.set_facecolor(axis_bg)
-            ax.tick_params(colors=text)
-            ax.xaxis.label.set_color(text)
-            ax.yaxis.label.set_color(text)
-            ax.title.set_color(text)
-            ax.grid(color=grid, alpha=0.3)
-            for spine in ax.spines.values():
-                spine.set_color(grid)
+        theme = "dark" if self._is_dark_mode else "light"
+        _apply_mpl_theme(fig, fig.get_axes(), theme=theme)
 
 class FileWindow(QMainWindow):
     """Top-level application window for the ErrP Visualizer.
@@ -1702,175 +1271,10 @@ class FileWindow(QMainWindow):
             self._update_empty_state()
             self._update_files_label()
 
-    def convert_ganglion_csv_to_set(self, csv_path: str) -> str:
-        """Convert an OpenBCI Ganglion ``.csv`` to EEGLAB ``.set`` format.
-
-        If the CSV contains event markers in column 14 (BrainFlow
-        layout), the data is epoched around stimulus-onset events
-        (markers 1 = congruent, 2 = incongruent) using a −200 ms to
-        +800 ms window — a 1-second epoch that captures both the ERN
-        (50–150 ms) and Pe (200–400 ms) ErrP components.
-
-        If no usable markers are found (fewer than 2 stimulus events),
-        the full recording is saved as continuous (``trials=1``) data.
-
-        Hardcoded for the 4-channel Ganglion at 200 Hz with approximate
-        scalp positions for TP9, AF7, AF8, TP10.
-
-        Parameters:
-            csv_path (str): Path to the source ``.csv`` file.
-
-        Returns:
-            str: Path to the newly created ``*_converted.set`` file
-            (same directory as the input).
-        """
-        import pandas as pd
-        from scipy.io import savemat
-        import numpy as np
- 
-        # Read CSV — row 0 is BrainFlow column headers (0,1,...,14)
-        df = pd.read_csv(csv_path, comment='%', header=0, skipinitialspace=True)
- 
-        # If header row is numeric strings, re-read without header
-        try:
-            float(df.columns[0])
-            df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
-            df = df.iloc[1:].reset_index(drop=True)  # drop the numeric header row
-        except (ValueError, IndexError):
-            pass
- 
-        # EEG channels: cols 1-4 (µV), shape (4, n_samples)
-        raw = df.iloc[:, 1:5].values.T.astype(np.float64)
-        raw = raw / 1e6   # µV → V
- 
-        # Marker column (col 14) — 0 means no event
-        markers_raw = df.iloc[:, 14].values.astype(np.float64)
- 
-        n_channels = 4
-        sfreq      = 200
-        n_samples  = raw.shape[1]
- 
-        # Channel locations
-        ch_locs = [
-            {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
-            {'labels': 'AF7',  'X': -0.6,  'Y': 0.87,  'Z': 0.0, 'theta': -55.0,  'radius': 0.9},
-            {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
-            {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
-        ]
- 
-        # ── Marker names ──────────────────────────────────────────────────────
-        EVENT_ID = {
-            'congruent':    1,
-            'incongruent':  2,
-            'correct':      3,
-            'error':        4,
-            'no_response':  5,
-        }
-        # Reverse map: code → name
-        CODE_NAME = {v: k for k, v in EVENT_ID.items()}
- 
-        # ── Detect stimulus-onset markers (1 = congruent, 2 = incongruent) ───
-        stim_codes  = {1, 2}
-        stim_samples = [
-            (i, int(markers_raw[i]))
-            for i in range(n_samples)
-            if markers_raw[i] in stim_codes
-        ]
- 
-        has_markers = len(stim_samples) >= 2   # need at least 2 epochs to be useful
- 
-        if has_markers:
-            # ── Epoch around each stimulus onset ─────────────────────────────
-            # Window: -200ms pre-stimulus to +800ms post-stimulus (1 s total)
-            pre_ms, post_ms = 200, 800
-            pre_samp  = int(pre_ms  / 1000 * sfreq)   # 40 samples
-            post_samp = int(post_ms / 1000 * sfreq)   # 160 samples
-            epoch_len = pre_samp + post_samp           # 200 samples per epoch
-            tmin_s    = -pre_ms  / 1000                # -0.2 s
-            tmax_s    =  post_ms / 1000                # +0.8 s
- 
-            epochs_list = []
-            event_rows  = []   # [sample_index, 0, event_code]
- 
-            for onset_sample, code in stim_samples:
-                start = onset_sample - pre_samp
-                end   = onset_sample + post_samp
-                if start < 0 or end > n_samples:
-                    continue   # skip epochs that would go out of bounds
- 
-                epoch = raw[:, start:end]   # (4, 200)
-                epochs_list.append(epoch)
-                event_rows.append([onset_sample, 0, code])
- 
-            if len(epochs_list) < 2:
-                # Not enough valid epochs — fall back to continuous
-                has_markers = False
-            else:
-                # Stack into (n_epochs, n_channels, n_times) then
-                # reshape to EEGLAB's (n_channels, n_times, n_epochs)
-                epoched = np.stack(epochs_list, axis=0)               # (E, 4, 200)
-                data_3d = np.transpose(epoched, (1, 2, 0)).astype(np.float32)  # (4, 200, E)
- 
-                n_epochs = data_3d.shape[2]
-                events_arr = np.array(event_rows, dtype=np.float64)   # (E, 3)
- 
-                # Build EEGLAB event struct list
-                eeg_events = [
-                    {
-                        'type':    float(row[2]),
-                        'latency': float(row[0]) + 1,   # EEGLAB uses 1-based sample index
-                        'label':   CODE_NAME.get(int(row[2]), str(int(row[2]))),
-                    }
-                    for row in event_rows
-                ]
- 
-                EEG = {
-                    'data':    data_3d,
-                    'setname': 'Flanker_ErrP',
-                    'nbchan':  n_channels,
-                    'pnts':    epoch_len,
-                    'trials':  n_epochs,
-                    'srate':   float(sfreq),
-                    'xmin':    tmin_s,
-                    'xmax':    tmax_s,
-                    'times':   (np.arange(epoch_len) / sfreq + tmin_s).tolist(),
-                    'chanlocs': ch_locs,
-                    'ref':     'common',
-                    'event':   eeg_events,
-                    'epoch':   [{'event': i + 1} for i in range(n_epochs)],
-                    'eventdescription': list(CODE_NAME.values()),
-                }
- 
-                logger.info(
-                    f"Epoched {n_epochs} trials "
-                    f"({sum(1 for _, c in stim_samples if c == 1)} congruent, "
-                    f"{sum(1 for _, c in stim_samples if c == 2)} incongruent) "
-                    f"window {tmin_s*1000:.0f} to {tmax_s*1000:.0f} ms"
-                )
- 
-        if not has_markers:
-            # ── Continuous fallback ───────────────────────────────────────────
-            EEG = {
-                'data':    raw.astype(np.float32),
-                'setname': 'Ganglion_Recording',
-                'nbchan':  n_channels,
-                'pnts':    n_samples,
-                'trials':  1,
-                'srate':   float(sfreq),
-                'xmin':    0.0,
-                'xmax':    n_samples / sfreq,
-                'times':   (np.arange(n_samples) / sfreq).tolist(),
-                'chanlocs': ch_locs,
-                'ref':     'common',
-            }
-            logger.debug(
-                f"No markers found — saved as continuous "
-                f"({n_samples/sfreq:.1f}s, {n_samples} samples)"
-            )
- 
-        output_path = csv_path.replace('.csv', '_converted.set')
-        savemat(output_path, {'EEG': EEG}, appendmat=False)
-        return output_path
+    @staticmethod
+    def convert_ganglion_csv_to_set(csv_path: str) -> str:
+        """Delegate to :func:`src.data_processing.csv_converter.convert_ganglion_csv_to_set`."""
+        return convert_ganglion_csv_to_set(csv_path)
 
     def _close_tab(self, index: int):
         """Remove a single tab and untrack its file path."""
