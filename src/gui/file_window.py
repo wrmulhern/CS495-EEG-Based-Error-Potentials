@@ -1938,6 +1938,8 @@ class FileWindow(QMainWindow):
             "QFrame { background: #ffffff; border: 1px solid #dadce0; border-radius: 4px; }"
         )
         self._style_clear_btn(dark=False)
+        self._style_help_btn(dark=False)
+        self._style_record_eeg_btn(dark=False)
 
         for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
@@ -1965,6 +1967,8 @@ class FileWindow(QMainWindow):
             "QFrame { background: #121212; border: 1px solid #3c4043; border-radius: 4px; }"
         )
         self._style_clear_btn(dark=True)
+        self._style_help_btn(dark=True)
+        self._style_record_eeg_btn(dark=True)
 
         for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
