@@ -1189,7 +1189,8 @@ class FileWindow(QMainWindow):
 
             tab = FileTab(filepath=ap, is_dark_mode=self.is_dark_mode, parent=self)
             label = os.path.basename(ap)
-            self.tab_widget.addTab(tab, label)
+            idx = self.tab_widget.addTab(tab, label)
+            self._make_close_btn(idx)
             added.append(label)
 
         if added:
@@ -1298,6 +1299,10 @@ class FileWindow(QMainWindow):
         self.browse_btn.setStyleSheet(btn_style)
         self.download_btn.setStyleSheet(btn_style)
 
+        self._style_help_btn(dark=dark)
+        self._style_record_eeg_btn(dark=dark)
+        self._restyle_all_close_btns(dark=dark)
+
     def _style_clear_btn(self, dark: bool):
         """Apply light or dark stylesheet to the "Clear All" button."""
         p = get_palette(dark)
@@ -1320,3 +1325,41 @@ class FileWindow(QMainWindow):
             f"QTabBar::tab:hover {{ background: {p.surface_hover}; color: {p.text}; }}"
             f"QTabBar::close-button {{ subcontrol-position: right; }}"
         )
+
+    def _make_close_btn(self, index: int) -> QPushButton:
+        """Create a themed 'x' close button and attach it to the tab at *index*."""
+        btn = QPushButton("×")
+        btn.setFixedSize(18, 18)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFlat(True)
+        btn.clicked.connect(self._close_tab_by_btn)
+        self._style_close_btn(btn, self.is_dark_mode)
+        self.tab_widget.tabBar().setTabButton(index, self.tab_widget.tabBar().RightSide, btn)
+        return btn
+
+    @staticmethod
+    def _style_close_btn(btn: QPushButton, dark: bool):
+        """Apply theme-aware stylesheet to a tab close button."""
+        p = get_palette(dark)
+        btn.setStyleSheet(
+            f"QPushButton {{ color: {p.text_secondary}; border: none; border-radius: 9px;"
+            f" font-size: 14px; font-weight: bold; padding: 0; margin: 0; background: transparent; }}"
+            f"QPushButton:hover {{ background: {p.icon_hover_bg}; color: {p.text}; }}"
+        )
+
+    def _close_tab_by_btn(self):
+        """Handle close-button clicks by finding which tab owns the sender."""
+        bar = self.tab_widget.tabBar()
+        sender_btn = self.sender()
+        for i in range(self.tab_widget.count()):
+            if bar.tabButton(i, bar.RightSide) is sender_btn:
+                self._close_tab(i)
+                return
+
+    def _restyle_all_close_btns(self, dark: bool):
+        """Update every existing tab close button for the new theme."""
+        bar = self.tab_widget.tabBar()
+        for i in range(self.tab_widget.count()):
+            btn = bar.tabButton(i, bar.RightSide)
+            if isinstance(btn, QPushButton):
+                self._style_close_btn(btn, dark)

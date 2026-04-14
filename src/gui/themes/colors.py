@@ -62,6 +62,9 @@ class Palette:
     toggle_track_on: str
     toggle_track_on_pressed: str
 
+    # ── Icon / close buttons ─────────────────────────────────────────
+    icon_hover_bg: str   # translucent hover backdrop for icon-only buttons
+
     # ── Drop zone ────────────────────────────────────────────────────
     drop_border: str     # idle dashed border
     drop_hover_border: str  # hover dashed border
@@ -104,6 +107,8 @@ LIGHT = Palette(
     toggle_track_off_pressed="#c7c9cc",
     toggle_track_on="#1a73e8",
     toggle_track_on_pressed="#1666c1",
+    # Icon buttons
+    icon_hover_bg="#dfe1e3",
     # Drop zone
     drop_border="#9aa0a6",
     drop_hover_border="#1a73e8",
@@ -147,6 +152,8 @@ DARK = Palette(
     toggle_track_off_pressed="#80868b",
     toggle_track_on="#8ab4f8",
     toggle_track_on_pressed="#669df6",
+    # Icon buttons
+    icon_hover_bg="#4f5153",
     # Drop zone
     drop_border="#5f6368",
     drop_hover_border="#8ab4f8",
