@@ -76,7 +76,7 @@ a person perceives or makes an error. Two main components:</p>
   <li><b>Epoch (ms)</b> &mdash; crop the time axis. Leave blank for the full epoch.
       Disabled automatically for Topographic Map.</li>
   <li><b>Sensor</b> &mdash; plot a single channel instead of all channels (Time Series only).</li>
-  <li><b>Topomap times (s)</b> &mdash; three time points (in seconds) for the scalp maps.</li>
+  <li><b>Topomap times (ms)</b> &mdash; three time points (in milliseconds) for the scalp maps.</li>
   <li><b>Display Events and Responses</b> &mdash; overlays the ERN window (blue, 50&ndash;150 ms)
       and Pe window (green, 200&ndash;400 ms) with hover-activated labels.</li>
 </ul>

@@ -232,22 +232,22 @@ class FileTab(QWidget):
         topo_layout = QVBoxLayout(self.topo_times_container)
         topo_layout.setContentsMargins(0, 0, 0, 0)
         topo_layout.setSpacing(6)
-        topo_label = QLabel("Topomap times (s)")
+        topo_label = QLabel("Topomap times (ms)")
         topo_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         topo_layout.addWidget(topo_label)
 
         topo_row = QHBoxLayout()
         topo_row.setSpacing(8)
         self.topo_time_1 = QLineEdit()
-        self.topo_time_1.setPlaceholderText("0.1")
+        self.topo_time_1.setPlaceholderText("100")
         self.topo_time_1.setFixedWidth(70)
         self.topo_time_1.textChanged.connect(self.mark_needs_update)
         self.topo_time_2 = QLineEdit()
-        self.topo_time_2.setPlaceholderText("0.2")
+        self.topo_time_2.setPlaceholderText("200")
         self.topo_time_2.setFixedWidth(70)
         self.topo_time_2.textChanged.connect(self.mark_needs_update)
         self.topo_time_3 = QLineEdit()
-        self.topo_time_3.setPlaceholderText("0.3")
+        self.topo_time_3.setPlaceholderText("300")
         self.topo_time_3.setFixedWidth(70)
         self.topo_time_3.textChanged.connect(self.mark_needs_update)
         topo_row.addWidget(self.topo_time_1)
@@ -734,19 +734,23 @@ class FileTab(QWidget):
         self.anim_slider.setValue(new_val)
 
     def _parse_topomap_times(self) -> List[float]:
-        """Read the three topomap-time text fields, falling back to 0.1 / 0.2 / 0.3 s."""
-        defaults = [0.1, 0.2, 0.3]
-        result = []
+        """Read the three topomap-time text fields (ms), falling back to 100 / 200 / 300 ms.
+
+        Returns times converted to seconds for downstream use.
+        """
+        defaults_ms = [100, 200, 300]
+        result_ms = []
         for i, w in enumerate([self.topo_time_1, self.topo_time_2, self.topo_time_3]):
             t = w.text().strip()
             if not t:
-                result.append(defaults[i])
+                result_ms.append(defaults_ms[i])
                 continue
             try:
-                result.append(float(t))
+                result_ms.append(float(t))
             except ValueError:
-                return defaults
-        return result if result else defaults
+                return [ms / 1000.0 for ms in defaults_ms]
+        result_ms = result_ms if result_ms else defaults_ms
+        return [ms / 1000.0 for ms in result_ms]
 
     def mark_needs_update(self):
         """Highlight the Visualize button to signal that options have changed."""
