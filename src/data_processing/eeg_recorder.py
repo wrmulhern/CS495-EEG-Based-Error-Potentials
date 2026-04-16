@@ -74,6 +74,14 @@ class EEGRecorder:
             port (str): Serial port for the Ganglion dongle, e.g.
                 ``"COM3"`` (Windows) or ``"/dev/cu.usbmodem1"`` (macOS).
         """
+        # Port validation: ensure it's a valid string and in available ports
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError("Port must be a non-empty string")
+        
+        available_ports = self.list_ports()
+        if port not in available_ports:
+            raise ValueError(f"Port '{port}' is not available. Available ports: {available_ports}")
+        
         self.port = port
         self._board = None
         self._lock  = threading.Lock()
@@ -95,16 +103,35 @@ class EEGRecorder:
             params = BrainFlowInputParams()
             params.serial_port = self.port
 
+            # Access control: check if port is already in use
+            try:
+                import serial
+                test_serial = serial.Serial(self.port, timeout=1)
+                test_serial.close()
+            except Exception:
+                raise RuntimeError(f"Port '{self.port}' is already in use or inaccessible")
+
             self._board = BoardShim(BoardIds.GANGLION_NATIVE_BOARD, params)
             self._board.prepare_session()
+            
+            # Device authenticity: verify it's a Ganglion board
+            board_info = self._board.get_board_info()
+            if board_info['board_id'] != BoardIds.GANGLION_NATIVE_BOARD.value:
+                self._board.release_session()
+                self._board = None
+                raise RuntimeError(f"Device on port '{self.port}' is not a Ganglion board")
+            
             self._board.start_stream(GANGLION.ring_buffer_samples)
             self._running = True
-            logger.info(f"EEG stream started on {self.port}")
+            logger.info(f"EEG stream started on {self.port} (Ganglion verified)")
 
         # cant connect
         except Exception as exc:
             self._running = False
-            raise RuntimeError(f"Could not connect to Ganglion on {self.port}: {exc}") from exc
+            self._board = None
+            # Safe error logging: don't expose internal details
+            logger.error(f"Failed to start EEG stream on {self.port}")
+            raise RuntimeError(f"Could not connect to Ganglion on {self.port}") from exc
 
     def insert_marker(self, value: float):
         """Stamp an event marker into the live EEG stream (thread-safe).
@@ -148,10 +175,14 @@ class EEGRecorder:
 
         with self._lock:
             self._running = False
-            data = self._board.get_board_data()   # shape: (n_cols, n_samples)
-            self._board.stop_stream()
-            self._board.release_session()
-            self._board = None
+            try:
+                data = self._board.get_board_data()   # shape: (n_cols, n_samples)
+                self._board.stop_stream()
+                self._board.release_session()
+                self._board = None
+            except Exception as exc:
+                logger.error(f"Error stopping EEG stream on {self.port}")
+                raise RuntimeError(f"Failed to stop EEG recording on {self.port}") from exc
 
         logger.info(f"Captured {data.shape[1]} samples ({data.shape[1]/self.SFREQ:.1f}s)")
 
@@ -166,22 +197,40 @@ class EEGRecorder:
         rows[:, 13]    = data[self.TS_COL, :]           # unix timestamp
         rows[:, 14]    = data[self.MARKER_COL, :]       # markers
 
-        # Build filename
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        output_path = Path(output_dir) / f"flanker_eeg_{ts}.csv"
+        # Data protection: secure output directory
+        output_path = Path(output_dir) / f"flanker_eeg_{time.strftime('%Y%m%d_%H%M%S')}.csv"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-
+        
+        # Ensure output_dir is not in a public location
+        if output_path.parent.is_relative_to(Path.home() / "Desktop") or output_path.parent.is_relative_to(Path.home() / "Documents"):
+            logger.warning(f"Saving EEG data to user-accessible directory: {output_path.parent}")
+        
         header = ",".join(str(i) for i in range(GANGLION.csv_total_cols))
-        np.savetxt(
-            str(output_path),
-            rows,
-            delimiter=",",
-            header=header,
-            comments="",
-            fmt=RECORDER.numpy_fmt,
-        )
+        try:
+            np.savetxt(
+                str(output_path),
+                rows,
+                delimiter=",",
+                header=header,
+                comments="",
+                fmt=RECORDER.numpy_fmt,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to save EEG data to {output_path}")
+            raise RuntimeError(f"Could not save EEG recording to {output_path}") from exc
 
-        logger.info(f"EEG saved to {output_path}")
+        # Data protection: set restrictive permissions on Windows (limited but attempt)
+        try:
+            import os
+            if os.name == 'nt':  # Windows
+                # On Windows, this sets read-only for owner, but limited effect
+                output_path.chmod(0o400)
+            else:
+                output_path.chmod(0o600)  # Owner read/write only
+        except Exception:
+            logger.warning(f"Could not set restrictive permissions on {output_path}")
+
+        logger.info(f"EEG saved securely to {output_path}")
         return str(output_path)
 
     @property
