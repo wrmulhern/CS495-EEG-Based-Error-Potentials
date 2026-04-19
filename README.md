@@ -166,3 +166,18 @@ Toggle **Dark mode** in the top bar. The theme applies to both the Qt UI and the
 
 - **EEGLAB .set** — epoched data with ≥2 trials. Companion `.fdt` files are handled automatically.
 - **.csv** — OpenBCI Ganglion format. Automatically converted to `.set` on load.
+
+---
+
+### Running Tests
+
+To run the **unit tests**:
+
+```bash
+uv run pytest -q
+```
+To run a specific unit test:
+
+```bash
+uv run pytest tests/.py:: -v
+```
