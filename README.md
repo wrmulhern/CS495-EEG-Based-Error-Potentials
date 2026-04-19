@@ -179,5 +179,5 @@ uv run pytest -q
 To run a specific unit test:
 
 ```bash
-uv run pytest tests/.py:: -v
+uv run pytest tests/<test_file>.py -v
 ```
