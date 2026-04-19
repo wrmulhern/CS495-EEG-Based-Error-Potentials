@@ -23,5 +23,6 @@ def test_eeg_recorder_init_invalid_port():
 
 def test_list_ports():
     """Test list_ports."""
-    ports = EEGRecorder.list_ports()
-    assert ports == []  # Since serial not installed
+    with patch('serial.tools.list_ports.comports', return_value=[]):
+        ports = EEGRecorder.list_ports()
+        assert ports == []
