@@ -269,7 +269,7 @@ def read_epochs_eeglab_minimal(set_file):
     else:
         raise ValueError(f"Unexpected data dimensions: {data.shape}")
 
-        logger.debug(f"Final data shape: {data.shape} (epochs, channels, times)")
+    logger.debug(f"Final data shape: {data.shape} (epochs, channels, times)")
 
     # Extract channel information
     ch_names = []
@@ -315,8 +315,8 @@ def read_epochs_eeglab_minimal(set_file):
         xmin = 0.0
         logger.debug("Warning: Could not find xmin/tmin, assuming 0.0")
 
-        logger.debug(f"Sampling rate: {sfreq} Hz")
-        logger.debug(f"Epoch start time: {xmin} seconds")
+    logger.debug(f"Sampling rate: {sfreq} Hz")
+    logger.debug(f"Epoch start time: {xmin} seconds")
 
     # Extract events
     events = None

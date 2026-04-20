@@ -1,15 +1,8 @@
 """
 Main application window and per-file tab widget for the ErrP Visualizer.
 
-This module contains the entire desktop GUI layer built on PyQt5 and
-Matplotlib:
-
 Classes
 -------
-* :class:`MultiSelectItemDelegate` / :class:`MultiSelectDropdown` —
-  custom multi-select channel picker with checkbox-style toggling.
-* :class:`HelpDialog` — modal dialog that fetches and renders the
-  GitHub README (falls back to embedded HTML content on network failure).
 * :class:`FileTab` — self-contained widget for a single loaded EEG
   file.  Owns the Matplotlib canvas, all "Graph Options" controls, the
   animated-topomap playback logic, and lazy data loading.
@@ -39,14 +32,12 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
-from PyQt5.QtCore import Qt, QUrl, QTimer, pyqtSignal
-from PyQt5.QtGui import QKeySequence, QIcon, QDesktopServices, QColor
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QKeySequence, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -54,14 +45,9 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QSpacerItem,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
     QTabWidget,
@@ -71,423 +57,24 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
 )
 
-from src.data_processing.data_loader import read_epochs_eeglab_minimal, read_csv_data
+from src.data_processing.data_loader import read_epochs_eeglab_minimal
 from src.data_processing.file_validator import FileValidator, FileValidationError
 from src.data_processing.data_processor import average_epochs, select_time_window
-from src.data_visualization.visualizer import plot_evoked, plot_topomap, plot_joint, plot_topomap_frame
+from src.data_processing.csv_converter import convert_ganglion_csv_to_set
+from src.data_visualization.visualizer import (
+    plot_evoked, plot_topomap, plot_joint, plot_topomap_frame,
+    _apply_mpl_theme,
+)
 from .utils.drag_and_drop import FileDropFrame
 from .utils.checkbox import ToggleSwitch
-from .themes.light_theme import apply_light_theme
-from .themes.dark_theme import apply_dark_theme
+from .utils.multi_select import MultiSelectDropdown, MultiSelectItemDelegate
+from .help_dialog import HelpDialog
+from .themes.theme import apply_theme
+from .themes.colors import get_palette
 from .flanker_window import FlankerWindow
-
-import urllib.request
-import threading
+from src.config import VALIDATION, EXPORT, PLOT
 
 logger = logging.getLogger(__name__)
-
-# LIVE_RECORDING_URL = "https://google.com"  # swap in real URL
-README_URL = "https://raw.githubusercontent.com/wrmulhern/CS495-EEG-Based-Error-Potentials/main/README.md" #readme link that our help dialog reads from
-
-#
-#
-# MULTI-SELECT DROPDOWN WIDGET
-#
-#
-class MultiSelectItemDelegate:
-    """Utility for styling ``QListWidgetItem`` rows in the channel picker.
-
-    Selected items get a blue (#1a73e8) background with white text;
-    deselected items revert to the default white/black colours.  Used
-    exclusively by :class:`MultiSelectDropdown`.
-    """
-    @staticmethod
-    def update_item_style(item: QListWidgetItem, is_selected: bool):
-        """Set the foreground and background colours of *item*."""
-        if is_selected:
-            item.setBackground(QColor("#1a73e8"))
-            item.setForeground(QColor("#ffffff"))
-        else:
-            item.setBackground(QColor(Qt.white))
-            item.setForeground(QColor(Qt.black))
-
-
-class MultiSelectDropdown(QWidget):
-    """Custom multi-select dropdown for EEG channel selection.
-
-    Presents a ``QPushButton`` that, when clicked, opens a popup
-    ``QListWidget``.  Items are toggled individually with a single
-    click; the first item (``"All Channels"``) acts as a select-all /
-    deselect-all toggle.  The popup closes on *Enter*, *Escape*, or
-    focus loss.
-
-    Signals:
-        selectionChanged(list[str]): Emitted whenever the selection
-            set changes.
-        confirmed(): Emitted when the popup is dismissed (used to mark
-            the Visualize button as needing re-run).
-    """
-    selectionChanged = pyqtSignal(list)
-    confirmed = pyqtSignal()
-
-    def __init__(self, items: List[str], parent=None):
-        super().__init__(parent)
-        self.items = items
-        self.selected = set()
-        self.is_open = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Button to show/hide dropdown
-        self.button = QPushButton("All Channels")
-        self.button.setStyleSheet("text-align: left; padding-left: 8px;")
-        self.button.clicked.connect(self.toggle_dropdown)
-        layout.addWidget(self.button)
-
-        # Dropdown frame (initially hidden)
-        self.dropdown_frame = QFrame()
-        self.dropdown_frame.setFrameShape(QFrame.StyledPanel)
-        self.dropdown_frame.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-
-        dropdown_layout = QVBoxLayout(self.dropdown_frame)
-        dropdown_layout.setContentsMargins(0, 0, 0, 0)
-        dropdown_layout.setSpacing(0)
-
-        # List widget with items
-        self.list_widget = QListWidget()
-        self.list_widget.setMaximumHeight(250)
-        self.list_widget.setSelectionMode(QListWidget.NoSelection)  # Disable blue highlight
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
-
-        # Store the original keyPressEvent method and override it
-        self._original_list_keypress = self.list_widget.keyPressEvent
-        self.list_widget.keyPressEvent = self._on_list_key_press
-
-        for i, item_text in enumerate(items):
-            item = QListWidgetItem(item_text)
-            self.list_widget.addItem(item)
-
-        dropdown_layout.addWidget(self.list_widget)
-        self.dropdown_frame.setLayout(dropdown_layout)
-        self.dropdown_frame.hide()
-
-        # Install event filter to detect when dropdown loses focus
-        self.dropdown_frame.installEventFilter(self)
-
-    def toggle_dropdown(self):
-        """Show the popup if hidden, or hide it if visible."""
-        if self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        else:
-            self.open_dropdown()
-
-    def open_dropdown(self):
-        """Show the dropdown below the button."""
-        # Position below button
-        pos = self.button.mapToGlobal(self.button.rect().bottomLeft())
-        self.dropdown_frame.move(pos)
-        self.dropdown_frame.resize(self.button.width(), 250)
-        self.dropdown_frame.show()
-        self.list_widget.setFocus()
-        self.is_open = True  # Set flag after showing
-
-    def close_dropdown(self):
-        """Hide the dropdown and confirm the selection."""
-        self.dropdown_frame.hide()
-        self.is_open = False  # Set flag after hiding
-        self.confirmed.emit()
-
-    def _on_item_clicked(self, item: QListWidgetItem):
-        """Toggle the clicked item and synchronise the "All Channels" state."""
-        idx = self.list_widget.row(item)
-        item_text = self.items[idx]
-
-        # Special handling for "All Channels"
-        if item_text == "All Channels":
-            # If "All Channels" is currently selected
-            if item_text in self.selected:
-                # Deselect all items
-                self.selected.clear()
-                for i in range(self.list_widget.count()):
-                    list_item = self.list_widget.item(i)
-                    MultiSelectItemDelegate.update_item_style(list_item, False)
-            else:
-                # Select all items
-                self.selected = set(self.items)
-                for i in range(self.list_widget.count()):
-                    list_item = self.list_widget.item(i)
-                    MultiSelectItemDelegate.update_item_style(list_item, True)
-        else:
-            # Regular item clicked - toggle selection
-            is_currently_selected = item_text in self.selected
-
-            if is_currently_selected:
-                self.selected.discard(item_text)
-            else:
-                self.selected.add(item_text)
-
-            # Update styling for this item
-            MultiSelectItemDelegate.update_item_style(item, not is_currently_selected)
-
-            # Check if all items (excluding "All Channels") are selected
-            all_items = set(self.items[1:])  # Skip "All Channels"
-            individual_selected = self.selected.copy()
-            individual_selected.discard("All Channels")
-
-            all_checkbox = self.list_widget.item(0)
-            if individual_selected == all_items:
-                self.selected.add("All Channels")
-                MultiSelectItemDelegate.update_item_style(all_checkbox, True)
-            else:
-                self.selected.discard("All Channels")
-                MultiSelectItemDelegate.update_item_style(all_checkbox, False)
-
-        self.selectionChanged.emit(list(self.selected))
-        self._update_button_text()
-
-    def _on_list_key_press(self, event):
-        """Close the popup on Enter / Escape; delegate other keys."""
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-            self.close_dropdown()
-        elif event.key() == Qt.Key_Escape:
-            self.close_dropdown()
-        else:
-            self._original_list_keypress(event)
-
-    def eventFilter(self, obj, event):
-        """Auto-close the popup when the dropdown frame loses focus."""
-        if obj == self.dropdown_frame:
-            if event.type() == 3:  # QEvent.FocusOut
-                if self.dropdown_frame.isVisible():
-                    self.close_dropdown()
-                    return True
-        return super().eventFilter(obj, event)
-
-    def _update_button_text(self):
-        """Summarise the current selection on the dropdown button face."""
-        if not self.selected:
-            text = "No Selection"
-        elif "All Channels" in self.selected and len(self.selected) == len(self.items):
-            text = "All Channels"
-        else:
-            # Show count or abbreviated list
-            if len(self.selected) == 1:
-                text = list(self.selected)[0]
-            else:
-                text = f"{len(self.selected)} selected"
-        self.button.setText(text)
-
-    def get_selected(self) -> List[str]:
-        """Return the currently selected channel names."""
-        return list(self.selected)
-
-    def set_items(self, items: List[str]):
-        """Replace the available items and clear the selection."""
-        self.items = items
-        self.list_widget.clear()
-        self.selected.clear()
-
-        for item_text in items:
-            item = QListWidgetItem(item_text)
-            self.list_widget.addItem(item)
-
-        self._update_button_text()
-
-    def keyPressEvent(self, event):
-        """Handle Escape key to close dropdown."""
-        if event.key() == Qt.Key_Escape and self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        else:
-            super().keyPressEvent(event)
-
-    def focusOutEvent(self, event):
-        """Close dropdown when parent widget loses focus."""
-        if self.dropdown_frame.isVisible():
-            self.close_dropdown()
-        super().focusOutEvent(event)
-
-#
-#
-# HELP DIALOG
-#
-#
-class HelpDialog(QDialog):
-    """Modal help dialog accessible from the top-bar "? Help" button.
-
-    On open, a background thread fetches the project README from
-    GitHub (:data:`README_URL`) and renders it as HTML via the
-    ``markdown`` package (if installed) or a regex-based fallback.
-    While the fetch is in flight the dialog shows a "Loading…" message
-    so it opens instantly.  If the network request fails, the dialog
-    falls back to :attr:`_CONTENT`, an embedded HTML quick-start guide.
-
-    The dialog respects the current light / dark theme.
-    """
-
-    _CONTENT = """
-<h2 style="margin-top:0;">ErrP Visualizer &mdash; Quick Guide</h2>
-
-<h3>What is an ErrP?</h3>
-<p>An <b>Error-Related Potential (ErrP)</b> is a brain signal that appears in EEG when
-a person perceives or makes an error. Two main components:</p>
-<ul>
-  <li><b>ERN / Ne</b> (50&ndash;150 ms) &mdash; negative deflection shortly after the error,
-      generated in the anterior cingulate cortex.</li>
-  <li><b>Pe</b> (200&ndash;400 ms) &mdash; positive deflection reflecting conscious error awareness.</li>
-</ul>
-
-<h3>End-to-end workflow</h3>
-<ol>
-  <li>Click <b>Record EEG</b> in the top bar. This opens a web application where you can run
-      a <b>Flanker Task</b> &mdash; a standard cognitive paradigm that reliably elicits ErrP
-      signals using a connected BCI headset.</li>
-  <li>Complete the task. The web app exports your session as a <b>.set</b> or <b>.csv</b> file.</li>
-  <li>Drop that file into this app to visualize your ErrP.</li>
-</ol>
-
-<h3>Loading files</h3>
-<ul>
-  <li>Drag and drop one or more files onto the drop zone, or click <b>Browse (&hellip;)</b>.</li>
-  <li><b>.set</b> files are loaded directly. <b>.csv</b> files (e.g. from OpenBCI Ganglion)
-      are <b>automatically converted</b> to .set format &mdash; no manual steps required.
-      A converted file is saved alongside the original CSV.</li>
-  <li>Each file opens in its own <b>tab</b>. Tabs are fully independent.</li>
-  <li>Files load <b>lazily</b>: data is only read when you first click <b>Visualize</b> on that tab.</li>
-  <li>Close a single tab with its <b>&times;</b> button, or remove all tabs with <b>Clear All</b>.</li>
-</ul>
-
-<h3>Graph types</h3>
-<ul>
-  <li><b>ErrP Time Series</b> &mdash; averaged ERP waveform across all (or selected) channels.
-      Best for inspecting the ERN and Pe components over time.</li>
-  <li><b>Topographic Map</b> &mdash; scalp voltage map at up to three time points.
-      Requires &ge;19 channels. The epoch window is fixed to the full range.</li>
-  <li><b>Joint Maps</b> &mdash; time series and topomaps combined in one figure.
-      Topomap times outside the epoch window show as <i>Out of range</i> placeholders.</li>
-</ul>
-
-<h3>Graph options</h3>
-<ul>
-  <li><b>Epoch (ms)</b> &mdash; crop the time axis. Leave blank for the full epoch.
-      Disabled automatically for Topographic Map.</li>
-  <li><b>Sensor</b> &mdash; plot a single channel instead of all channels (Time Series only).</li>
-  <li><b>Topomap times (s)</b> &mdash; three time points (in seconds) for the scalp maps.</li>
-  <li><b>Display Events and Responses</b> &mdash; overlays the ERN window (blue, 50&ndash;150 ms)
-      and Pe window (green, 200&ndash;400 ms) with hover-activated labels.</li>
-</ul>
-
-<h3>Downloading a graph</h3>
-<p>Click <b>Download Graph</b> in the bottom bar to save the currently displayed figure
-as a high-resolution PNG (300&thinsp;dpi).</p>
-
-<h3>Dark mode</h3>
-<p>Toggle <b>Dark mode</b> in the top bar. The theme applies to both the Qt UI and the
-embedded Matplotlib figures.</p>
-
-<h3>Supported file formats</h3>
-<ul>
-  <li><b>EEGLAB .set</b> &mdash; epoched data with &ge;2 trials. Companion <b>.fdt</b> files
-      are handled automatically.</li>
-  <li><b>.csv</b> &mdash; OpenBCI Ganglion format. Automatically converted to .set on load.</li>
-</ul>
-"""
-
-    def __init__(self, is_dark: bool = False, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Help — ErrP Visualizer")
-        self.setMinimumSize(620, 520)
-        self.resize(660, 560)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 16)
-        layout.setSpacing(12)
-
-        self.browser = QTextBrowser()
-        self.browser.setOpenExternalLinks(True)
-        self.browser.setFrameShape(QFrame.NoFrame)
-        self.browser.setHtml("<p style='color:gray;'>Loading README from GitHub…</p>")
-        layout.addWidget(self.browser, stretch=1)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
-        btn_box.rejected.connect(self.accept)
-        layout.addWidget(btn_box)
-
-        self._apply_theme(is_dark)
-
-        # Fetch README in background thread so dialog opens instantly
-        self._is_dark = is_dark
-        t = threading.Thread(target=self._load_readme, daemon=True)
-        t.start()
-
-    def _load_readme(self):
-        """Background worker: fetch, convert, and inject the README HTML."""
-        try:
-            req = urllib.request.Request(
-                README_URL,
-                headers={"User-Agent": "ErrP-Visualizer"}
-            )
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                md_text = resp.read().decode("utf-8")
-            html = self._md_to_html(md_text)
-        except Exception:
-            html = self._CONTENT  # fallback to hardcoded content
-
-        # Update UI on main thread
-        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
-        QMetaObject.invokeMethod(
-            self.browser, "setHtml",
-            Qt.QueuedConnection,
-            Q_ARG(str, html)
-        )
-
-    @staticmethod
-    def _md_to_html(md: str) -> str:
-        """Convert Markdown text to HTML, with a regex fallback if ``markdown`` is not installed."""
-        try:
-            import markdown
-            return markdown.markdown(md, extensions=["fenced_code", "tables"])
-        except ImportError:
-            pass
-
-        # Basic fallback: handle headings, bold, code, links, bullets
-        import re
-        html = md
-        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-        html = re.sub(r'^## (.+)$',  r'<h2>\1</h2>', html, flags=re.MULTILINE)
-        html = re.sub(r'^# (.+)$',   r'<h1>\1</h1>', html, flags=re.MULTILINE)
-        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
-        html = re.sub(r'`(.+?)`', r'<code>\1</code>', html)
-        html = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', html)
-        html = re.sub(r'^\s*[-*] (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
-        html = re.sub(r'(<li>.*</li>\n?)+', r'<ul>\g<0></ul>', html)
-        html = re.sub(r'\n\n+', '</p><p>', html)
-        return f"<p>{html}</p>"
-
-    def _apply_theme(self, is_dark: bool):
-        if is_dark:
-            self.setStyleSheet(
-                "QDialog { background: #1e1e1e; }"
-                "QTextBrowser { background: #1e1e1e; color: #e8eaed; border: none; font-size: 13px; }"
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-            )
-        else:
-            self.setStyleSheet(
-                "QDialog { background: #ffffff; }"
-                "QTextBrowser { background: #ffffff; color: #202124; border: none; font-size: 13px; }"
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 16px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-            )
-
-#
-#
-# FileTab: Class for each tab (file) that will be owned in FileWindow
-#
-#
 class FileTab(QWidget):
     """Self-contained tab widget for a single loaded ``.set`` file.
 
@@ -552,7 +139,7 @@ class FileTab(QWidget):
         root.addWidget(options_box, stretch=1)
 
         # Apply initial theme
-        self._apply_mpl_theme(self.figure)
+        self._apply_mpl_theme_to_fig(self.figure)
 
 
     def _build_graph_frame(self) -> QFrame:
@@ -588,7 +175,8 @@ class FileTab(QWidget):
         epoch_layout.setSpacing(6)
 
         self.epoch_label = QLabel("Epoch (in ms)")
-        self.epoch_label.setStyleSheet("color: #202124; font-size: 12px;")
+        p = get_palette(self._is_dark_mode)
+        self.epoch_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
 
         epoch_row = QHBoxLayout()
         epoch_row.setSpacing(10)
@@ -621,7 +209,7 @@ class FileTab(QWidget):
         sensor_layout.setContentsMargins(0, 0, 0, 0)
         sensor_layout.setSpacing(6)
         sensor_label = QLabel("Sensor(s)")
-        sensor_label.setStyleSheet("color: #202124; font-size: 12px;")
+        sensor_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.sensor_combo = MultiSelectDropdown(["All Channels"])
         self.sensor_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sensor_combo.confirmed.connect(self.mark_needs_update)
@@ -631,7 +219,7 @@ class FileTab(QWidget):
 
         # Graph type dropdown
         graph_type_label = QLabel("Graph Type")
-        graph_type_label.setStyleSheet("color: #202124; font-size: 12px;")
+        graph_type_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.graph_type_combo = QComboBox()
         self.graph_type_combo.addItems(["ErrP Time Series", "Topographic Map", "Joint Maps"])
         self.graph_type_combo.currentTextChanged.connect(self._on_graph_type_changed)
@@ -644,22 +232,22 @@ class FileTab(QWidget):
         topo_layout = QVBoxLayout(self.topo_times_container)
         topo_layout.setContentsMargins(0, 0, 0, 0)
         topo_layout.setSpacing(6)
-        topo_label = QLabel("Topomap times (s)")
-        topo_label.setStyleSheet("color: #202124; font-size: 12px;")
+        topo_label = QLabel("Topomap times (ms)")
+        topo_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         topo_layout.addWidget(topo_label)
 
         topo_row = QHBoxLayout()
         topo_row.setSpacing(8)
         self.topo_time_1 = QLineEdit()
-        self.topo_time_1.setPlaceholderText("0.1")
+        self.topo_time_1.setPlaceholderText("100")
         self.topo_time_1.setFixedWidth(70)
         self.topo_time_1.textChanged.connect(self.mark_needs_update)
         self.topo_time_2 = QLineEdit()
-        self.topo_time_2.setPlaceholderText("0.2")
+        self.topo_time_2.setPlaceholderText("200")
         self.topo_time_2.setFixedWidth(70)
         self.topo_time_2.textChanged.connect(self.mark_needs_update)
         self.topo_time_3 = QLineEdit()
-        self.topo_time_3.setPlaceholderText("0.3")
+        self.topo_time_3.setPlaceholderText("300")
         self.topo_time_3.setFixedWidth(70)
         self.topo_time_3.textChanged.connect(self.mark_needs_update)
         topo_row.addWidget(self.topo_time_1)
@@ -676,7 +264,7 @@ class FileTab(QWidget):
         topo_mode_layout.setContentsMargins(0, 0, 0, 0)
         topo_mode_layout.setSpacing(6)
         self.topo_mode_label = QLabel("Topomap Mode")
-        self.topo_mode_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.topo_mode_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.topo_mode_combo = QComboBox()
         self.topo_mode_combo.addItems(["Static", "Animated"])
         self.topo_mode_combo.currentTextChanged.connect(self._on_topo_mode_changed)
@@ -701,7 +289,7 @@ class FileTab(QWidget):
         anim_btn_row.addWidget(self.anim_play_btn)
 
         anim_speed_label = QLabel("Speed:")
-        anim_speed_label.setStyleSheet("color: #202124; font-size: 12px;")
+        anim_speed_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.anim_speed_combo = QComboBox()
         self.anim_speed_combo.addItems(["0.5x", "1x", "2x", "4x"])
         self.anim_speed_combo.setCurrentIndex(1)
@@ -720,7 +308,7 @@ class FileTab(QWidget):
         slider_row.addWidget(self.anim_slider, stretch=1)
 
         self.anim_time_label = QLabel("0.0 ms")
-        self.anim_time_label.setStyleSheet("color: #202124; font-size: 12px;")
+        self.anim_time_label.setStyleSheet(f"color: {p.text}; font-size: 12px;")
         self.anim_time_label.setFixedWidth(80)
         self.anim_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         slider_row.addWidget(self.anim_time_label)
@@ -735,7 +323,7 @@ class FileTab(QWidget):
         ev_layout.setContentsMargins(0, 0, 0, 0)
         ev_layout.setSpacing(0)
         self.events_checkbox = QCheckBox("Display Events and Responses")
-        self.events_checkbox.setStyleSheet("font-size: 12px; color: #202124;")
+        self.events_checkbox.setStyleSheet(f"font-size: 12px; color: {p.text};")
         self.events_checkbox.stateChanged.connect(self._on_events_checkbox_changed)
         self.events_checkbox.stateChanged.connect(self.mark_needs_update)
         ev_layout.addWidget(self.events_checkbox)
@@ -817,7 +405,7 @@ class FileTab(QWidget):
 
         if graph_type in ("Topographic Map", "Joint Maps"):
                 n_channels = len(self.current_epochs.ch_names)
-                if n_channels < 19:
+                if n_channels < VALIDATION.min_topo_channels:
                     QMessageBox.warning(
                         self, "Insufficient Channels",
                         f"Topographic maps require at least 19 channels for reliable spatial interpolation.\n\n"
@@ -1008,49 +596,40 @@ class FileTab(QWidget):
                         item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
                         MultiSelectItemDelegate.update_item_style(item, True)
                 self.sensor_combo.selected = set(self._last_time_series_selection)
-                self.sensor_combo._update_button_text()
+                self.sensor_combo.update_button_text()
             else:
-                # Default to "All Channels"
-                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
-                MultiSelectItemDelegate.update_item_style(item, True)
-                self.sensor_combo.selected = {"All Channels"}
-                self.sensor_combo._update_button_text()
+                self._restore_default_sensor_selection()
         else:
             # Time Series mode
             self.sensor_combo.set_items(self._all_sensors if self._all_sensors else ["All Channels"])
             if self._last_time_series_selection and any(s in self._all_sensors for s in self._last_time_series_selection):
-                # Restore previous selections for Time Series
                 for sensor in self._last_time_series_selection:
                     if sensor in self._all_sensors:
                         item = self.sensor_combo.list_widget.findItems(sensor, Qt.MatchExactly)[0]
                         MultiSelectItemDelegate.update_item_style(item, True)
                 self.sensor_combo.selected = set(self._last_time_series_selection)
-                self.sensor_combo._update_button_text()
+                self.sensor_combo.update_button_text()
             else:
-                # Default to "All Channels"
-                item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
-                MultiSelectItemDelegate.update_item_style(item, True)
-                self.sensor_combo.selected = {"All Channels"}
-                self.sensor_combo._update_button_text()
+                self._restore_default_sensor_selection()
 
         self._last_graph_type = graph_type
 
+    def _restore_default_sensor_selection(self):
+        """Set sensor dropdown to "All Channels" and update the button text."""
+        item = self.sensor_combo.list_widget.findItems("All Channels", Qt.MatchExactly)[0]
+        MultiSelectItemDelegate.update_item_style(item, True)
+        self.sensor_combo.selected = {"All Channels"}
+        self.sensor_combo.update_button_text()
+
     def _set_epoch_field_style(self, disabled: bool):
         """Apply greyed-out or active styling to the epoch start/end fields."""
+        p = get_palette(self._is_dark_mode)
         if disabled:
-            if self._is_dark_mode:
-                s = "QLineEdit { background: #2d2d2d; color: #5f6368; border: 1px solid #3c4043; border-radius: 4px; }"
-                lc = "color: #5f6368; font-size: 12px;"
-            else:
-                s = "QLineEdit { background: #f1f3f4; color: #9aa0a6; border: 1px solid #dadce0; border-radius: 4px; }"
-                lc = "color: #9aa0a6; font-size: 12px;"
+            bg, fg = p.surface_dim, p.text_disabled
         else:
-            if self._is_dark_mode:
-                s = "QLineEdit { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-                lc = "color: #e8eaed; font-size: 12px;"
-            else:
-                s = "QLineEdit { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
-                lc = "color: #202124; font-size: 12px;"
+            bg, fg = (p.surface_alt if self._is_dark_mode else p.surface), p.text
+        s = f"QLineEdit {{ background: {bg}; color: {fg}; border: 1px solid {p.border}; border-radius: 4px; }}"
+        lc = f"color: {fg}; font-size: 12px;"
         self.epoch_start.setStyleSheet(s)
         self.epoch_end.setStyleSheet(s)
         self.epoch_label.setStyleSheet(lc)
@@ -1123,7 +702,7 @@ class FileTab(QWidget):
             return
         self._anim_playing = True
         self.anim_play_btn.setText("⏸  Pause")
-        self._anim_timer.start(50)
+        self._anim_timer.start(PLOT.anim_timer_ms)
 
     def _pause_animation(self):
         """Stop the timer and restore the Play button label."""
@@ -1146,7 +725,7 @@ class FileTab(QWidget):
         speed = float(speed_text.replace("x", ""))
 
         sfreq = self._anim_evoked.sfreq
-        step = max(1, round(sfreq * 0.025 * speed))
+        step = max(1, round(sfreq * PLOT.anim_tick_duration_s * speed))
 
         current = self.anim_slider.value()
         new_val = current + step
@@ -1155,53 +734,45 @@ class FileTab(QWidget):
         self.anim_slider.setValue(new_val)
 
     def _parse_topomap_times(self) -> List[float]:
-        """Read the three topomap-time text fields, falling back to 0.1 / 0.2 / 0.3 s."""
-        defaults = [0.1, 0.2, 0.3]
-        result = []
+        """Read the three topomap-time text fields (ms), falling back to 100 / 200 / 300 ms.
+
+        Returns times converted to seconds for downstream use.
+        """
+        defaults_ms = [100, 200, 300]
+        result_ms = []
         for i, w in enumerate([self.topo_time_1, self.topo_time_2, self.topo_time_3]):
             t = w.text().strip()
             if not t:
-                result.append(defaults[i])
+                result_ms.append(defaults_ms[i])
                 continue
             try:
-                result.append(float(t))
+                result_ms.append(float(t))
             except ValueError:
-                return defaults
-        return result if result else defaults
+                return [ms / 1000.0 for ms in defaults_ms]
+        result_ms = result_ms if result_ms else defaults_ms
+        return [ms / 1000.0 for ms in result_ms]
 
     def mark_needs_update(self):
         """Highlight the Visualize button to signal that options have changed."""
-        if self._is_dark_mode:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #8ab4f8; border: 1px solid #8ab4f8; border-radius: 4px;"
-                " font-size: 14px; color: #000000; }"
-                "QPushButton:hover { background: #669df6; }"
-                "QPushButton:pressed { background: #4a8af5; }"
-            )
-        else:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #1a73e8; border: 1px solid #1a73e8; border-radius: 4px;"
-                " font-size: 14px; color: white; }"
-                "QPushButton:hover { background: #1666c1; }"
-                "QPushButton:pressed { background: #1450b1; }"
-            )
+        p = get_palette(self._is_dark_mode)
+        fg = "#000000" if self._is_dark_mode else "#ffffff"
+        self.visualize_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.accent}; border: 1px solid {p.accent}; border-radius: 4px;"
+            f" font-size: 14px; color: {fg}; }}"
+            f"QPushButton:hover {{ background: {p.accent_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.accent_pressed}; }}"
+        )
 
     def reset_visualize_button(self):
         """Return the Visualize button to its neutral (non-highlighted) style."""
-        if self._is_dark_mode:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #202124; border: 1px solid #5f6368; border-radius: 4px;"
-                " font-size: 14px; color: #e8eaed; }"
-                "QPushButton:hover { background: #303134; }"
-                "QPushButton:pressed { background: #3c4043; }"
-            )
-        else:
-            self.visualize_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; border: 1px solid #202124; border-radius: 4px;"
-                " font-size: 14px; color: #202124; }"
-                "QPushButton:hover { background: #f6f8fe; }"
-                "QPushButton:pressed { background: #e8f0fe; }"
-            )
+        p = get_palette(self._is_dark_mode)
+        bg = p.surface_alt if self._is_dark_mode else p.surface
+        self.visualize_btn.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {p.border}; border-radius: 4px;"
+            f" font-size: 14px; color: {p.text}; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.accent_tint}; }}"
+        )
 
     def apply_theme(self, is_dark: bool):
         """Re-style every widget in this tab for light or dark mode.
@@ -1214,103 +785,58 @@ class FileTab(QWidget):
         applying ``_apply_mpl_theme`` to a static figure).
         """
         self._is_dark_mode = is_dark
+        p = get_palette(is_dark)
+        input_bg = p.surface_alt if is_dark else p.surface
 
-        # Graph frame border
-        if is_dark:
-            self.graph_frame.setStyleSheet(
-                "QFrame { background: #121212; border: 1px solid #3c4043; border-radius: 4px; }"
-            )
-        else:
-            self.graph_frame.setStyleSheet(
-                "QFrame { background: #ffffff; border: 1px solid #dadce0; border-radius: 4px; }"
-            )
+        self.graph_frame.setStyleSheet(
+            f"QFrame {{ background: {p.window}; border: 1px solid {p.border_strong}; border-radius: 4px; }}"
+        )
 
-        # Options box title
-        if is_dark:
-            self.options_box.setStyleSheet(
-                "QGroupBox { font-size: 13px; font-weight: 600; color: #e8eaed; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #e8eaed; }"
-            )
-        else:
-            self.options_box.setStyleSheet(
-                "QGroupBox { font-size: 13px; font-weight: 600; color: #202124; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #202124; }"
-            )
+        self.options_box.setStyleSheet(
+            f"QGroupBox {{ font-size: 13px; font-weight: 600; color: {p.text}; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {p.text}; }}"
+        )
 
-        # All QLineEdits inside this tab
         le_style = (
-            "QLineEdit { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-            if is_dark else
-            "QLineEdit { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
+            f"QLineEdit {{ background: {input_bg}; color: {p.text}; border: 1px solid {p.border}; border-radius: 4px; }}"
         )
         for le in self.findChildren(QLineEdit):
             le.setStyleSheet(le_style)
 
-        # All QComboBoxes inside this tab
         cb_style = (
-            "QComboBox { background: #202124; color: #e8eaed; border: 1px solid #5f6368; border-radius: 4px; }"
-            "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right;"
-            " width: 18px; border-left: 1px solid #5f6368; }"
-            if is_dark else
-            "QComboBox { background: #ffffff; color: #202124; border: 1px solid #dadce0; border-radius: 4px; }"
-            "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right;"
-            " width: 18px; border-left: 1px solid #dadce0; }"
+            f"QComboBox {{ background: {input_bg}; color: {p.text}; border: 1px solid {p.border}; border-radius: 4px; }}"
+            f"QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right;"
+            f" width: 18px; border-left: 1px solid {p.border}; }}"
         )
         for cb in self.findChildren(QComboBox):
             cb.setStyleSheet(cb_style)
 
-        # All QLabels inside this tab
         for lbl in self.findChildren(QLabel):
             s = lbl.styleSheet() or ""
-            if is_dark:
-                s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
-            else:
-                s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
+            old_txt = "#e8eaed" if not is_dark else "#202124"
+            old_sec = "#9aa0a6" if not is_dark else "#5f6368"
+            s = s.replace(old_txt, p.text).replace(old_sec, p.text_secondary)
             lbl.setStyleSheet(s)
 
-        # Events checkbox
-        if is_dark:
-            self.events_checkbox.setStyleSheet(
-                "QCheckBox { font-size: 12px; color: #e8eaed; }"
-                "QCheckBox::indicator { width: 16px; height: 16px; }"
-                "QCheckBox::indicator:unchecked { border-radius: 3px; border: 1px solid #9aa0a6; background: #202124; }"
-                "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #8ab4f8; background: #8ab4f8; }"
-            )
-        else:
-            self.events_checkbox.setStyleSheet(
-                "QCheckBox { font-size: 12px; color: #202124; }"
-                "QCheckBox::indicator { width: 16px; height: 16px; }"
-                "QCheckBox::indicator:unchecked { border-radius: 3px; border: 1px solid #dadce0; background: #ffffff; }"
-                "QCheckBox::indicator:checked { border-radius: 3px; border: 1px solid #1a73e8; background: #1a73e8; }"
-            )
+        self.events_checkbox.setStyleSheet(
+            f"QCheckBox {{ font-size: 12px; color: {p.text}; }}"
+            f"QCheckBox::indicator {{ width: 16px; height: 16px; }}"
+            f"QCheckBox::indicator:unchecked {{ border-radius: 3px; border: 1px solid {p.border}; background: {input_bg}; }}"
+            f"QCheckBox::indicator:checked {{ border-radius: 3px; border: 1px solid {p.accent}; background: {p.accent}; }}"
+        )
 
-        # Animation play button + slider
-        if is_dark:
-            self.anim_play_btn.setStyleSheet(
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-            self.anim_slider.setStyleSheet(
-                "QSlider::groove:horizontal { background: #3c4043; height: 6px; border-radius: 3px; }"
-                "QSlider::handle:horizontal { background: #8ab4f8; width: 14px; margin: -4px 0;"
-                " border-radius: 7px; }"
-                "QSlider::sub-page:horizontal { background: #8ab4f8; border-radius: 3px; }"
-            )
-        else:
-            self.anim_play_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 10px; font-size: 12px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-                "QPushButton:pressed { background: #e8eaed; }"
-            )
-            self.anim_slider.setStyleSheet(
-                "QSlider::groove:horizontal { background: #dadce0; height: 6px; border-radius: 3px; }"
-                "QSlider::handle:horizontal { background: #1a73e8; width: 14px; margin: -4px 0;"
-                " border-radius: 7px; }"
-                "QSlider::sub-page:horizontal { background: #1a73e8; border-radius: 3px; }"
-            )
+        self.anim_play_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 10px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
+        self.anim_slider.setStyleSheet(
+            f"QSlider::groove:horizontal {{ background: {p.border_strong}; height: 6px; border-radius: 3px; }}"
+            f"QSlider::handle:horizontal {{ background: {p.accent}; width: 14px; margin: -4px 0;"
+            f" border-radius: 7px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {p.accent}; border-radius: 3px; }}"
+        )
 
         # Keep animation theme in sync so slider redraws use the right colours
         self._anim_theme = "dark" if is_dark else "light"
@@ -1322,33 +848,18 @@ class FileTab(QWidget):
         if self._anim_evoked is not None:
             self._on_anim_slider_changed(self.anim_slider.value())
         else:
-            self._apply_mpl_theme(self.figure)
+            self._apply_mpl_theme_to_fig(self.figure)
             self.canvas.draw_idle()
 
         # Update button appearance
         self.reset_visualize_button()
 
-    def _apply_mpl_theme(self, fig: Figure):
+    def _apply_mpl_theme_to_fig(self, fig: Figure):
         """Apply the current light/dark palette to a static Matplotlib figure."""
         if fig is None:
             return
-        if self._is_dark_mode:
-            bg, axis_bg, text, grid = "#121212", "#121212", "#e8eaed", "#3c4043"
-        else:
-            bg, axis_bg, text, grid = "#ffffff", "#ffffff", "#202124", "#dadce0"
-
-        fig.patch.set_facecolor(bg)
-        if hasattr(fig, "_suptitle") and fig._suptitle is not None:
-            fig._suptitle.set_color(text)
-        for ax in fig.get_axes():
-            ax.set_facecolor(axis_bg)
-            ax.tick_params(colors=text)
-            ax.xaxis.label.set_color(text)
-            ax.yaxis.label.set_color(text)
-            ax.title.set_color(text)
-            ax.grid(color=grid, alpha=0.3)
-            for spine in ax.spines.values():
-                spine.set_color(grid)
+        theme = "dark" if self._is_dark_mode else "light"
+        _apply_mpl_theme(fig, fig.get_axes(), theme=theme)
 
 class FileWindow(QMainWindow):
     """Top-level application window for the ErrP Visualizer.
@@ -1375,7 +886,7 @@ class FileWindow(QMainWindow):
     def __init__(self, file_path: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("ErrP Visualizer")
-        self.resize(1280, 760)
+        self.resize(*PLOT.main_window_size)
 
         self.is_dark_mode = False
         # Track absolute paths already open so we dont duplicate tabs
@@ -1392,7 +903,7 @@ class FileWindow(QMainWindow):
         self._build_tab_area()  # QTabWidget
         self._build_bottom_bar()  # drag/drop, browse, clear all
 
-        self._apply_window_light_styles()
+        self._apply_window_theme(dark=False)
 
         if file_path:
             self.add_files([file_path])
@@ -1405,7 +916,8 @@ class FileWindow(QMainWindow):
 
         # Title
         title_lbl = QLabel("ErrP Visualizer")
-        title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #202124;")
+        p = get_palette(False)
+        title_lbl.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {p.text};")
         self.title_lbl = title_lbl
         bar.addWidget(title_lbl)
         bar.addStretch(1)
@@ -1437,7 +949,7 @@ class FileWindow(QMainWindow):
         dark_row = QHBoxLayout()
         dark_row.setSpacing(6)
         dark_lbl = QLabel("Dark mode")
-        dark_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        dark_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         self.dark_lbl = dark_lbl
         self.dark_mode_toggle = ToggleSwitch("")
         self.dark_mode_toggle.set_dark_mode(False)
@@ -1465,37 +977,23 @@ class FileWindow(QMainWindow):
 
     def _style_help_btn(self, dark: bool):
         """Apply light or dark stylesheet to the Help button."""
-        if dark:
-            self.help_btn.setStyleSheet(
-                "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-        else:
-            self.help_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #f1f3f4; }"
-                "QPushButton:pressed { background: #e8eaed; }"
-            )
+        p = get_palette(dark)
+        self.help_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 12px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.surface_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
 
     def _style_record_eeg_btn(self, dark: bool):
         """Apply light or dark stylesheet to the Record EEG button."""
-        if dark:
-            self.record_eeg_btn.setStyleSheet(
-                "QPushButton { background: #2d2d2d; color: #f28b82; border: 1px solid #f28b82;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #3c4043; }"
-                "QPushButton:pressed { background: #4a4e51; }"
-            )
-        else:
-            self.record_eeg_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; color: #c5221f; border: 1px solid #f28b82;"
-                " border-radius: 4px; padding: 4px 12px; font-size: 13px; }"
-                "QPushButton:hover { background: #fce8e6; }"
-                "QPushButton:pressed { background: #fad2cf; }"
-            )
+        p = get_palette(dark)
+        self.record_eeg_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.danger}; border: 1px solid {p.danger_border};"
+            f" border-radius: 4px; padding: 4px 12px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.danger_hover}; }}"
+            f"QPushButton:pressed {{ background: {p.surface_pressed}; }}"
+        )
 
     def _build_tab_area(self):
         """QTabWidget that holds one FileTab per loaded file."""
@@ -1506,9 +1004,10 @@ class FileWindow(QMainWindow):
         self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
 
         # Show a placeholder when no tabs are open
+        p = get_palette(False)
         self._empty_label = QLabel("Drop files below or use Browse to get started")
         self._empty_label.setAlignment(Qt.AlignCenter)
-        self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
+        self._empty_label.setStyleSheet(f"color: {p.text_disabled}; font-size: 14px;")
 
         # Stack: either the tab widget or the empty label
         self._tab_stack = QVBoxLayout()
@@ -1542,8 +1041,9 @@ class FileWindow(QMainWindow):
         # Download Graph column
         download_col = QVBoxLayout()
         download_col.setSpacing(4)
+        p = get_palette(False)
         download_lbl = QLabel("Download")
-        download_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        download_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         download_lbl.setAlignment(Qt.AlignHCenter)
         download_lbl.setFixedWidth(BTN_W)
         self.download_lbl = download_lbl
@@ -1567,7 +1067,7 @@ class FileWindow(QMainWindow):
         side_col.setSpacing(4)
 
         browse_lbl = QLabel("Browse")
-        browse_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        browse_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         browse_lbl.setAlignment(Qt.AlignHCenter)
         browse_lbl.setFixedWidth(BTN_W)
         self.browse_lbl = browse_lbl
@@ -1577,7 +1077,7 @@ class FileWindow(QMainWindow):
         self.browse_btn.clicked.connect(self._browse_files)
 
         clear_lbl = QLabel("Clear All")
-        clear_lbl.setStyleSheet("font-size: 13px; color: #202124;")
+        clear_lbl.setStyleSheet(f"font-size: 13px; color: {p.text};")
         clear_lbl.setAlignment(Qt.AlignHCenter)
         clear_lbl.setFixedWidth(BTN_W)
         self.clear_lbl = clear_lbl
@@ -1599,7 +1099,7 @@ class FileWindow(QMainWindow):
         df_layout.addLayout(side_col, 0, 4, 1, 1)
 
         self.files_label = QLabel("No files loaded")
-        self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
+        self.files_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px;")
         self.files_label.setWordWrap(True)
         df_layout.addWidget(self.files_label, 1, 0, 1, 5)
 
@@ -1615,7 +1115,7 @@ class FileWindow(QMainWindow):
             self,
             "Select .set or .csv file(s)",
             "",
-            "EEG Files (*.set *.csv);;All Files (*.*)"
+            EXPORT.file_dialog_filter
         )
         if paths:
             self.add_files(paths)
@@ -1632,17 +1132,16 @@ class FileWindow(QMainWindow):
             self,
             "Save Graph As",
             "",
-            "PNG Files (*.png);;All Files (*.*)"
+            EXPORT.save_dialog_filter
         )
 
         if filename:
             try:
                 # Ensure the filename has .png extension
-                if not filename.lower().endswith('.png'):
-                    filename += '.png'
+                if not filename.lower().endswith(EXPORT.save_format):
+                    filename += EXPORT.save_format
 
-                # Save the figure
-                current_tab.figure.savefig(filename, dpi=300, bbox_inches='tight')
+                current_tab.figure.savefig(filename, dpi=EXPORT.save_dpi, bbox_inches='tight')
                 QMessageBox.information(self, "Success", f"Graph saved as {filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save graph:\n{str(e)}")
@@ -1693,7 +1192,8 @@ class FileWindow(QMainWindow):
 
             tab = FileTab(filepath=ap, is_dark_mode=self.is_dark_mode, parent=self)
             label = os.path.basename(ap)
-            self.tab_widget.addTab(tab, label)
+            idx = self.tab_widget.addTab(tab, label)
+            self._make_close_btn(idx)
             added.append(label)
 
         if added:
@@ -1702,175 +1202,10 @@ class FileWindow(QMainWindow):
             self._update_empty_state()
             self._update_files_label()
 
-    def convert_ganglion_csv_to_set(self, csv_path: str) -> str:
-        """Convert an OpenBCI Ganglion ``.csv`` to EEGLAB ``.set`` format.
-
-        If the CSV contains event markers in column 14 (BrainFlow
-        layout), the data is epoched around stimulus-onset events
-        (markers 1 = congruent, 2 = incongruent) using a −200 ms to
-        +800 ms window — a 1-second epoch that captures both the ERN
-        (50–150 ms) and Pe (200–400 ms) ErrP components.
-
-        If no usable markers are found (fewer than 2 stimulus events),
-        the full recording is saved as continuous (``trials=1``) data.
-
-        Hardcoded for the 4-channel Ganglion at 200 Hz with approximate
-        scalp positions for TP9, AF7, AF8, TP10.
-
-        Parameters:
-            csv_path (str): Path to the source ``.csv`` file.
-
-        Returns:
-            str: Path to the newly created ``*_converted.set`` file
-            (same directory as the input).
-        """
-        import pandas as pd
-        from scipy.io import savemat
-        import numpy as np
- 
-        # Read CSV — row 0 is BrainFlow column headers (0,1,...,14)
-        df = pd.read_csv(csv_path, comment='%', header=0, skipinitialspace=True)
- 
-        # If header row is numeric strings, re-read without header
-        try:
-            float(df.columns[0])
-            df = pd.read_csv(csv_path, comment='%', header=None, skipinitialspace=True)
-            df = df.iloc[1:].reset_index(drop=True)  # drop the numeric header row
-        except (ValueError, IndexError):
-            pass
- 
-        # EEG channels: cols 1-4 (µV), shape (4, n_samples)
-        raw = df.iloc[:, 1:5].values.T.astype(np.float64)
-        raw = raw / 1e6   # µV → V
- 
-        # Marker column (col 14) — 0 means no event
-        markers_raw = df.iloc[:, 14].values.astype(np.float64)
- 
-        n_channels = 4
-        sfreq      = 200
-        n_samples  = raw.shape[1]
- 
-        # Channel locations
-        ch_locs = [
-            {'labels': 'TP9',  'X': -0.87, 'Y': -0.31, 'Z': 0.0, 'theta': -110.0, 'radius': 0.9},
-            {'labels': 'AF7',  'X': -0.6,  'Y': 0.87,  'Z': 0.0, 'theta': -55.0,  'radius': 0.9},
-            {'labels': 'AF8',  'X': 0.6,   'Y': 0.87,  'Z': 0.0, 'theta': 55.0,   'radius': 0.9},
-            {'labels': 'TP10', 'X': 0.87,  'Y': -0.31, 'Z': 0.0, 'theta': 110.0,  'radius': 0.9},
-        ]
- 
-        # ── Marker names ──────────────────────────────────────────────────────
-        EVENT_ID = {
-            'congruent':    1,
-            'incongruent':  2,
-            'correct':      3,
-            'error':        4,
-            'no_response':  5,
-        }
-        # Reverse map: code → name
-        CODE_NAME = {v: k for k, v in EVENT_ID.items()}
- 
-        # ── Detect stimulus-onset markers (1 = congruent, 2 = incongruent) ───
-        stim_codes  = {1, 2}
-        stim_samples = [
-            (i, int(markers_raw[i]))
-            for i in range(n_samples)
-            if markers_raw[i] in stim_codes
-        ]
- 
-        has_markers = len(stim_samples) >= 2   # need at least 2 epochs to be useful
- 
-        if has_markers:
-            # ── Epoch around each stimulus onset ─────────────────────────────
-            # Window: -200ms pre-stimulus to +800ms post-stimulus (1 s total)
-            pre_ms, post_ms = 200, 800
-            pre_samp  = int(pre_ms  / 1000 * sfreq)   # 40 samples
-            post_samp = int(post_ms / 1000 * sfreq)   # 160 samples
-            epoch_len = pre_samp + post_samp           # 200 samples per epoch
-            tmin_s    = -pre_ms  / 1000                # -0.2 s
-            tmax_s    =  post_ms / 1000                # +0.8 s
- 
-            epochs_list = []
-            event_rows  = []   # [sample_index, 0, event_code]
- 
-            for onset_sample, code in stim_samples:
-                start = onset_sample - pre_samp
-                end   = onset_sample + post_samp
-                if start < 0 or end > n_samples:
-                    continue   # skip epochs that would go out of bounds
- 
-                epoch = raw[:, start:end]   # (4, 200)
-                epochs_list.append(epoch)
-                event_rows.append([onset_sample, 0, code])
- 
-            if len(epochs_list) < 2:
-                # Not enough valid epochs — fall back to continuous
-                has_markers = False
-            else:
-                # Stack into (n_epochs, n_channels, n_times) then
-                # reshape to EEGLAB's (n_channels, n_times, n_epochs)
-                epoched = np.stack(epochs_list, axis=0)               # (E, 4, 200)
-                data_3d = np.transpose(epoched, (1, 2, 0)).astype(np.float32)  # (4, 200, E)
- 
-                n_epochs = data_3d.shape[2]
-                events_arr = np.array(event_rows, dtype=np.float64)   # (E, 3)
- 
-                # Build EEGLAB event struct list
-                eeg_events = [
-                    {
-                        'type':    float(row[2]),
-                        'latency': float(row[0]) + 1,   # EEGLAB uses 1-based sample index
-                        'label':   CODE_NAME.get(int(row[2]), str(int(row[2]))),
-                    }
-                    for row in event_rows
-                ]
- 
-                EEG = {
-                    'data':    data_3d,
-                    'setname': 'Flanker_ErrP',
-                    'nbchan':  n_channels,
-                    'pnts':    epoch_len,
-                    'trials':  n_epochs,
-                    'srate':   float(sfreq),
-                    'xmin':    tmin_s,
-                    'xmax':    tmax_s,
-                    'times':   (np.arange(epoch_len) / sfreq + tmin_s).tolist(),
-                    'chanlocs': ch_locs,
-                    'ref':     'common',
-                    'event':   eeg_events,
-                    'epoch':   [{'event': i + 1} for i in range(n_epochs)],
-                    'eventdescription': list(CODE_NAME.values()),
-                }
- 
-                logger.info(
-                    f"Epoched {n_epochs} trials "
-                    f"({sum(1 for _, c in stim_samples if c == 1)} congruent, "
-                    f"{sum(1 for _, c in stim_samples if c == 2)} incongruent) "
-                    f"window {tmin_s*1000:.0f} to {tmax_s*1000:.0f} ms"
-                )
- 
-        if not has_markers:
-            # ── Continuous fallback ───────────────────────────────────────────
-            EEG = {
-                'data':    raw.astype(np.float32),
-                'setname': 'Ganglion_Recording',
-                'nbchan':  n_channels,
-                'pnts':    n_samples,
-                'trials':  1,
-                'srate':   float(sfreq),
-                'xmin':    0.0,
-                'xmax':    n_samples / sfreq,
-                'times':   (np.arange(n_samples) / sfreq).tolist(),
-                'chanlocs': ch_locs,
-                'ref':     'common',
-            }
-            logger.debug(
-                f"No markers found — saved as continuous "
-                f"({n_samples/sfreq:.1f}s, {n_samples} samples)"
-            )
- 
-        output_path = csv_path.replace('.csv', '_converted.set')
-        savemat(output_path, {'EEG': EEG}, appendmat=False)
-        return output_path
+    @staticmethod
+    def convert_ganglion_csv_to_set(csv_path: str) -> str:
+        """Delegate to :func:`src.data_processing.csv_converter.convert_ganglion_csv_to_set`."""
+        return convert_ganglion_csv_to_set(csv_path)
 
     def _close_tab(self, index: int):
         """Remove a single tab and untrack its file path."""
@@ -1916,109 +1251,106 @@ class FileWindow(QMainWindow):
 
         self.is_dark_mode = bool(state)
 
-        if self.is_dark_mode:
-            apply_dark_theme(app)
-            self._apply_window_dark_styles()
-        else:
-            apply_light_theme(app)
-            self._apply_window_light_styles()
+        apply_theme(app, is_dark=self.is_dark_mode)
+        self._apply_window_theme(dark=self.is_dark_mode)
 
         # Propagate to every open tab
         for i in range(self.tab_widget.count()):
             tab: FileTab = self.tab_widget.widget(i)
             tab.apply_theme(self.is_dark_mode)
 
-    def _apply_window_light_styles(self):
-        """Set light-mode stylesheets on all window-level widgets."""
-        self.dark_mode_toggle.set_dark_mode(False)
-        self.drop_zone.set_dark_mode(False)
-        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=False))
+    def _apply_window_theme(self, dark: bool):
+        """Apply window-level styles for the given theme."""
+        p = get_palette(dark)
+
+        self.dark_mode_toggle.set_dark_mode(dark)
+        self.drop_zone.set_dark_mode(dark)
+        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=dark))
 
         self.drop_browse_frame.setStyleSheet(
-            "QFrame { background: #ffffff; border: 1px solid #dadce0; border-radius: 4px; }"
+            f"QFrame {{ background: {p.window}; border: 1px solid {p.border_strong}; border-radius: 4px; }}"
         )
-        self._style_clear_btn(dark=False)
-        self._style_help_btn(dark=False)
-        self._style_record_eeg_btn(dark=False)
+        self._style_clear_btn(dark=dark)
 
         for lbl in [self.title_lbl, self.dark_lbl,
                     self.browse_lbl, self.clear_lbl, self.download_lbl]:
-            s = lbl.styleSheet()
-            s = s.replace("#e8eaed", "#202124").replace("#9aa0a6", "#5f6368")
+            s = lbl.styleSheet() or ""
+            old_txt = "#e8eaed" if not dark else "#202124"
+            old_sec = "#9aa0a6" if not dark else "#5f6368"
+            s = s.replace(old_txt, p.text).replace(old_sec, p.text_secondary)
             lbl.setStyleSheet(s)
-        self.files_label.setStyleSheet("color: #5f6368; font-size: 11px;")
-        self._empty_label.setStyleSheet("color: #9aa0a6; font-size: 14px;")
+        self.files_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px;")
+        self._empty_label.setStyleSheet(f"color: {p.text_disabled}; font-size: 14px;")
 
-        light_btn_style = (
-            "QPushButton { background: #ffffff; color: #202124; border: 1px solid #dadce0;"
-            " border-radius: 4px; padding: 4px 8px; }"
-            " QPushButton:hover { background: #f1f3f4; }"
+        btn_style = (
+            f"QPushButton {{ background: {p.surface_elevated}; color: {p.text}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 4px 8px; }}"
+            f" QPushButton:hover {{ background: {p.surface_hover}; }}"
         )
-        self.browse_btn.setStyleSheet(light_btn_style)
-        self.download_btn.setStyleSheet(light_btn_style)
+        self.browse_btn.setStyleSheet(btn_style)
+        self.download_btn.setStyleSheet(btn_style)
 
-    def _apply_window_dark_styles(self):
-        """Set dark-mode stylesheets on all window-level widgets."""
-        self.dark_mode_toggle.set_dark_mode(True)
-        self.drop_zone.set_dark_mode(True)
-        self.tab_widget.setStyleSheet(self._tab_widget_style(dark=True))
-
-        self.drop_browse_frame.setStyleSheet(
-            "QFrame { background: #121212; border: 1px solid #3c4043; border-radius: 4px; }"
-        )
-        self._style_clear_btn(dark=True)
-        self._style_help_btn(dark=True)
-        self._style_record_eeg_btn(dark=True)
-
-        for lbl in [self.title_lbl, self.dark_lbl,
-                    self.browse_lbl, self.clear_lbl, self.download_lbl]:
-            s = lbl.styleSheet()
-            s = s.replace("#202124", "#e8eaed").replace("#5f6368", "#9aa0a6")
-            lbl.setStyleSheet(s)
-        self.files_label.setStyleSheet("color: #9aa0a6; font-size: 11px;")
-        self._empty_label.setStyleSheet("color: #5f6368; font-size: 14px;")
-
-        dark_btn_style = (
-            "QPushButton { background: #303134; color: #e8eaed; border: 1px solid #5f6368;"
-            " border-radius: 4px; padding: 4px 8px; }"
-            " QPushButton:hover { background: #3c4043; }"
-        )
-        self.browse_btn.setStyleSheet(dark_btn_style)
-        self.download_btn.setStyleSheet(dark_btn_style)
+        self._style_help_btn(dark=dark)
+        self._style_record_eeg_btn(dark=dark)
+        self._restyle_all_close_btns(dark=dark)
 
     def _style_clear_btn(self, dark: bool):
         """Apply light or dark stylesheet to the "Clear All" button."""
-        if dark:
-            self.clear_btn.setStyleSheet(
-                "QPushButton { background: #202124; border: 1px solid #f28b82; border-radius: 4px;"
-                " color: #f28b82; font-size: 16px; }"
-                "QPushButton:hover { background: #3c4043; }"
-            )
-        else:
-            self.clear_btn.setStyleSheet(
-                "QPushButton { background: #ffffff; border: 1px solid #d93025; border-radius: 4px;"
-                " color: #d93025; font-size: 16px; }"
-                "QPushButton:hover { background: #fce8e6; }"
-            )
+        p = get_palette(dark)
+        bg = p.surface_alt if dark else p.surface
+        self.clear_btn.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {p.danger_border}; border-radius: 4px;"
+            f" color: {p.danger}; font-size: 16px; }}"
+            f"QPushButton:hover {{ background: {p.danger_hover}; }}"
+        )
 
     @staticmethod
     def _tab_widget_style(dark: bool) -> str:
         """Return the ``QTabWidget`` / ``QTabBar`` stylesheet for the given theme."""
-        if dark:
-            return (
-                "QTabWidget::pane { border: 1px solid #3c4043; background: #1e1e1e; border-radius: 4px; }"
-                "QTabBar::tab { background: #2d2d2d; color: #9aa0a6; padding: 6px 16px;"
-                " border: 1px solid #3c4043; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }"
-                "QTabBar::tab:selected { background: #1e1e1e; color: #e8eaed; border-bottom: 1px solid #1e1e1e; }"
-                "QTabBar::tab:hover { background: #3c4043; color: #e8eaed; }"
-                "QTabBar::close-button { subcontrol-position: right; }"
-            )
-        else:
-            return (
-                "QTabWidget::pane { border: 1px solid #dadce0; background: #ffffff; border-radius: 4px; }"
-                "QTabBar::tab { background: #f1f3f4; color: #5f6368; padding: 6px 16px;"
-                " border: 1px solid #dadce0; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }"
-                "QTabBar::tab:selected { background: #ffffff; color: #202124; border-bottom: 1px solid #ffffff; }"
-                "QTabBar::tab:hover { background: #e8eaed; color: #202124; }"
-                "QTabBar::close-button { subcontrol-position: right; }"
-            )
+        p = get_palette(dark)
+        return (
+            f"QTabWidget::pane {{ border: 1px solid {p.border_strong}; background: {p.surface}; border-radius: 4px; }}"
+            f"QTabBar::tab {{ background: {p.surface_dim}; color: {p.text_secondary}; padding: 6px 16px;"
+            f" border: 1px solid {p.border_strong}; border-bottom: none; border-radius: 4px 4px 0 0; margin-right: 2px; }}"
+            f"QTabBar::tab:selected {{ background: {p.surface}; color: {p.text}; border-bottom: 1px solid {p.surface}; }}"
+            f"QTabBar::tab:hover {{ background: {p.surface_hover}; color: {p.text}; }}"
+            f"QTabBar::close-button {{ subcontrol-position: right; }}"
+        )
+
+    def _make_close_btn(self, index: int) -> QPushButton:
+        """Create a themed 'x' close button and attach it to the tab at *index*."""
+        btn = QPushButton("×")
+        btn.setFixedSize(18, 18)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFlat(True)
+        btn.clicked.connect(self._close_tab_by_btn)
+        self._style_close_btn(btn, self.is_dark_mode)
+        self.tab_widget.tabBar().setTabButton(index, self.tab_widget.tabBar().RightSide, btn)
+        return btn
+
+    @staticmethod
+    def _style_close_btn(btn: QPushButton, dark: bool):
+        """Apply theme-aware stylesheet to a tab close button."""
+        p = get_palette(dark)
+        btn.setStyleSheet(
+            f"QPushButton {{ color: {p.text_secondary}; border: none; border-radius: 9px;"
+            f" font-size: 14px; font-weight: bold; padding: 0; margin: 0; background: transparent; }}"
+            f"QPushButton:hover {{ background: {p.icon_hover_bg}; color: {p.text}; }}"
+        )
+
+    def _close_tab_by_btn(self):
+        """Handle close-button clicks by finding which tab owns the sender."""
+        bar = self.tab_widget.tabBar()
+        sender_btn = self.sender()
+        for i in range(self.tab_widget.count()):
+            if bar.tabButton(i, bar.RightSide) is sender_btn:
+                self._close_tab(i)
+                return
+
+    def _restyle_all_close_btns(self, dark: bool):
+        """Update every existing tab close button for the new theme."""
+        bar = self.tab_widget.tabBar()
+        for i in range(self.tab_widget.count()):
+            btn = bar.tabButton(i, bar.RightSide)
+            if isinstance(btn, QPushButton):
+                self._style_close_btn(btn, dark)

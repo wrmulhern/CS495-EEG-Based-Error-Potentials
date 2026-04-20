@@ -18,7 +18,7 @@ import os
 from PyQt5.QtWidgets import QApplication
 
 from src.gui.file_window import FileWindow
-from src.gui.themes.light_theme import apply_light_theme
+from src.gui.themes.theme import apply_theme
 
 LOG_LEVELS = {
     "CRITICAL": logging.CRITICAL,
@@ -70,7 +70,7 @@ def main():
     setup_logging(LOG_LEVELS[args.log_level])
 
     app = QApplication([])
-    apply_light_theme(app)
+    apply_theme(app, is_dark=False)
     w = FileWindow(args.input)
     w.show()
     app.exec_()

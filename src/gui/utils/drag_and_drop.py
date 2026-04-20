@@ -10,8 +10,9 @@ and ``.csv`` files without a file dialog.
 
 import os
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel
+
+from src.gui.themes.colors import get_palette
 
 
 class FileDropFrame(QFrame):
@@ -19,8 +20,8 @@ class FileDropFrame(QFrame):
 
     Visual states:
 
-    * **Idle** — grey dashed border with a centred instruction label.
-    * **Hover** — blue dashed border with a tinted background (shown
+    * **Idle** -- grey dashed border with a centred instruction label.
+    * **Hover** -- blue dashed border with a tinted background (shown
       while a valid drag is over the frame).
 
     Both states have light and dark variants, toggled via
@@ -42,9 +43,10 @@ class FileDropFrame(QFrame):
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(6)
 
+        p = get_palette(False)
         self.title = QLabel("Drag and drop one or more files here")
         self.title.setAlignment(Qt.AlignCenter)
-        self.title.setStyleSheet("color: #202124; font-size: 14px; border: none;")
+        self.title.setStyleSheet(f"color: {p.text}; font-size: 14px; border: none;")
 
         layout.addStretch(1)
         layout.addWidget(self.title)
@@ -62,68 +64,36 @@ class FileDropFrame(QFrame):
         self._is_dark_mode = is_dark
         self._set_idle_style()
 
-        if self._is_dark_mode:
-            self.title.setStyleSheet("color: #e8eaed; font-size: 14px; border: none;")
-        else:
-            self.title.setStyleSheet("color: #202124; font-size: 14px; border: none;")
+        p = get_palette(is_dark)
+        self.title.setStyleSheet(f"color: {p.text}; font-size: 14px; border: none;")
 
     def _set_idle_style(self) -> None:
         """Apply the grey dashed-border stylesheet (no drag in progress)."""
-        if not self._is_dark_mode:
-            self.setStyleSheet(
-                """
-                QFrame {
-                    border: 2px dashed #9aa0a6;
-                    border-radius: 6px;
-                    background: #ffffff;
-                }
-                QLabel {
-                    background: transparent;
-                }
-                """
-            )
-        else:
-            self.setStyleSheet(
-                """
-                QFrame {
-                    border: 2px dashed #5f6368;
-                    border-radius: 6px;
-                    background: #202124;
-                }
-                QLabel {
-                    background: transparent;
-                }
-                """
-            )
+        p = get_palette(self._is_dark_mode)
+        self.setStyleSheet(f"""
+            QFrame {{
+                border: 2px dashed {p.drop_border};
+                border-radius: 6px;
+                background: {p.surface_alt if self._is_dark_mode else p.surface};
+            }}
+            QLabel {{
+                background: transparent;
+            }}
+        """)
 
     def _set_hover_style(self) -> None:
         """Apply the blue dashed-border stylesheet (valid drag hovering)."""
-        if not self._is_dark_mode:
-            self.setStyleSheet(
-                """
-                QFrame {
-                    border: 2px dashed #1a73e8;
-                    border-radius: 6px;
-                    background: #e8f0fe;
-                }
-                QLabel {
-                    background: transparent;
-                }
-                """
-            )
-        else:
-            self.setStyleSheet(
-                """
-                QFrame {
-                    border: 2px dashed #8ab4f8;
-                    border-radius: 6px;
-                    background: #1e1e1e;
-                }
-                QLabel {
-                    background: transparent;
-                }
-                """
-            )
+        p = get_palette(self._is_dark_mode)
+        self.setStyleSheet(f"""
+            QFrame {{
+                border: 2px dashed {p.drop_hover_border};
+                border-radius: 6px;
+                background: {p.drop_hover_bg};
+            }}
+            QLabel {{
+                background: transparent;
+            }}
+        """)
 
     def dragEnterEvent(self, event):
         """Accept the drag if it carries file URLs; switch to hover style."""
