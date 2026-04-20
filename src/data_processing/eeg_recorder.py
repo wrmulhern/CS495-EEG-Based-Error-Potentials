@@ -88,50 +88,31 @@ class EEGRecorder:
         self._running = False
 
     def start(self):
-        """Connect to the Ganglion and begin streaming.
-
-        Raises:
-            RuntimeError: If the board cannot be reached on the
-                configured serial port.
-        """
+        """Connect to the Ganglion and begin streaming."""
         try:
             from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-            from brainflow.data_filter import DataFilter
 
             BoardShim.enable_dev_board_logger()
 
             params = BrainFlowInputParams()
             params.serial_port = self.port
 
-            # Access control: check if port is already in use
-            try:
-                import serial
-                test_serial = serial.Serial(self.port, timeout=1)
-                test_serial.close()
-            except Exception:
-                raise RuntimeError(f"Port '{self.port}' is already in use or inaccessible")
-
             self._board = BoardShim(BoardIds.GANGLION_NATIVE_BOARD, params)
             self._board.prepare_session()
-            
-            # Device authenticity: verify it's a Ganglion board
-            board_info = self._board.get_board_info()
-            if board_info['board_id'] != BoardIds.GANGLION_NATIVE_BOARD.value:
-                self._board.release_session()
-                self._board = None
-                raise RuntimeError(f"Device on port '{self.port}' is not a Ganglion board")
-            
             self._board.start_stream(GANGLION.ring_buffer_samples)
             self._running = True
-            logger.info(f"EEG stream started on {self.port} (Ganglion verified)")
+            logger.info(f"EEG stream started on {self.port}")
 
-        # cant connect
         except Exception as exc:
             self._running = False
+            if self._board is not None:
+                try:
+                    self._board.release_session()
+                except Exception:
+                    pass
             self._board = None
-            # Safe error logging: don't expose internal details
-            logger.error(f"Failed to start EEG stream on {self.port}")
-            raise RuntimeError(f"Could not connect to Ganglion on {self.port}") from exc
+            logger.error(f"Failed to start EEG stream on {self.port}: {exc}")
+            raise RuntimeError(f"Could not connect to Ganglion on {self.port}: {exc}") from exc
 
     def insert_marker(self, value: float):
         """Stamp an event marker into the live EEG stream (thread-safe).
