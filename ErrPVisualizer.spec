@@ -89,7 +89,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',
+    icon='assets/app_icon.ico',
 )
 
 # macOS: wrap the executable in a .app bundle
@@ -105,5 +105,5 @@ if sys.platform == 'darwin':
             'NSBluetoothPeripheralUsageDescription':
                 'ErrP Visualizer uses Bluetooth to connect to the OpenBCI Ganglion EEG headset.',
         },
-        icon='assets/icon.icns',
+        icon='assets/app_icon.icns',
     )
