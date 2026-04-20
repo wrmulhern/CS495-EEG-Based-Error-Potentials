@@ -69,6 +69,36 @@ FEEDBACK_MS   = FLANKER.feedback_ms
 ITI_MS        = FLANKER.iti_ms
 
 
+class _TrialSpinBox(QSpinBox):
+    """QSpinBox that snaps arrow-button stepping onto {5, 20, 40, 60, …}.
+
+    The minimum (5) is a low-end quick-test value; everything above
+    steps by the configured ``singleStep``.  Arrowing up from 5 lands
+    on 20 instead of ``5 + singleStep`` (e.g. 25); arrowing down from
+    20 lands on 5 instead of clamping at 0.
+    """
+
+    def stepBy(self, steps: int) -> None:
+        current = self.value()
+        step    = self.singleStep()
+        low     = self.minimum()
+
+        if current == low and steps > 0:
+            # Jump from the low-end value onto the regular grid at `step`,
+            # then consume any remaining steps at the normal interval.
+            self.setValue(step)
+            if steps > 1:
+                super().stepBy(steps - 1)
+            return
+
+        if current == step and steps < 0:
+            # Step down from the lowest grid value back to the low-end value.
+            self.setValue(low)
+            return
+
+        super().stepBy(steps)
+
+
 class _Signals(QObject):
     """Thread-safe signal bridge so background workers can update the Qt UI.
 
@@ -187,8 +217,8 @@ class FlankerWindow(QDialog):
         form.addRow("Serial port:", port_row)
 
         # Trial count
-        self._trial_spin = QSpinBox()
-        self._trial_spin.setRange(20, 400)
+        self._trial_spin = _TrialSpinBox()
+        self._trial_spin.setRange(5, 400)
         self._trial_spin.setValue(FLANKER.default_n_trials)
         self._trial_spin.setSingleStep(20)
         self._trial_spin.setSuffix("  trials")
