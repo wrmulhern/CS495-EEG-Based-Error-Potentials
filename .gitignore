@@ -12,7 +12,6 @@ uv.exe
 uvx.exe
 uvw.exe
 
-<<<<<<< HEAD
 # build artifacts
 build/
 dist/
@@ -20,12 +19,3 @@ dist/
 # mac OS files
 .DS_Store
 **/.DS_Store
-=======
-# PyInstaller build artifacts
-build/
-dist/
-*.spec
-
-# macOS
-.DS_Store
->>>>>>> a02ff2d81f8d6696e1504912206a4228fef9748c
