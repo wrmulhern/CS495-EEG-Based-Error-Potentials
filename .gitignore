@@ -15,7 +15,6 @@ uvw.exe
 # PyInstaller build artifacts
 build/
 dist/
-*.spec
 
 # macOS
 .DS_Store
