@@ -45,7 +45,7 @@ a = Analysis(
     binaries=brainflow_binaries,
     datas=[
         # Bundle the assets folder (app icon etc.) if it exists
-        ('src/assets', 'src/assets'),
+        ('assets', 'assets'),
     ],
     hiddenimports=[
         # Brainflow internals PyInstaller misses
@@ -97,7 +97,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon='src/assets/icon.icns',   # uncomment when icon is ready
+    icon='assets/app_icon.icns',
 )
 
 # macOS: wrap the executable in a .app bundle
@@ -105,7 +105,7 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
         name='ErrPVisualizer.app',
-        icon=None,   # replace with 'src/assets/icon.icns' when ready
+        icon='assets/app_icon.ico',
         bundle_identifier='edu.ua.htil.errpvisualizer',
         info_plist={
             'NSBluetoothAlwaysUsageDescription':
