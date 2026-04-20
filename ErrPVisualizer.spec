@@ -97,7 +97,6 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
         name='ErrPVisualizer.app',
-        icon=None,   # replace with 'src/assets/icon.icns' when ready
         bundle_identifier='edu.ua.htil.errpvisualizer',
         info_plist={
             'NSBluetoothAlwaysUsageDescription':
